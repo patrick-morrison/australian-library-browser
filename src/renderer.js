@@ -1308,17 +1308,6 @@ async function openItemInApp(item) {
   }
 }
 
-function summarizeProjectRecordMix(project) {
-  if (!project) {
-    return "";
-  }
-  const textCount = project.counts.texts || project.counts.newspapers || 0;
-  const imageCount = project.counts.images || 0;
-  const ignoredCount = project.ignoredCount || 0;
-  const uncollectedCount = project.uncollectedCount || 0;
-  return `${textCount} texts · ${imageCount} images · ${ignoredCount} ignored · ${uncollectedCount} uncollected`;
-}
-
 function getPluginSeedUrls() {
   return String(elements.pluginSeedUrls?.value || "")
     .split("\n")
@@ -2117,22 +2106,27 @@ function renderProjectDetails() {
     return;
   }
 
-  const sourceBadges = Object.entries(project.sourceCounts || {})
-    .map(([source, count]) => `<span class="source-badge">${source.toUpperCase()} ${count}</span>`)
-    .join("");
+  const textCount = project.counts.texts || project.counts.newspapers || 0;
+  const imageCount = project.counts.images || 0;
+  const ignoredCount = project.ignoredCount || 0;
+  const uncollectedCount = project.uncollectedCount || 0;
+  const summaryParts = [
+    `${textCount} article${textCount === 1 ? "" : "s"}`,
+    `${imageCount} image${imageCount === 1 ? "" : "s"}`
+  ];
+  if (ignoredCount) {
+    summaryParts.push(`${ignoredCount} ignored`);
+  }
+  if (uncollectedCount) {
+    summaryParts.push(`${uncollectedCount} uncollected`);
+  }
 
   elements.projectDetails.className = "project-details";
   elements.projectDetails.innerHTML = `
     <div>
       <strong>${project.folderName}</strong>
     </div>
-    <div class="project-stats">
-      <div class="project-stat"><span>Texts</span><strong>${project.counts.texts || project.counts.newspapers}</strong></div>
-      <div class="project-stat"><span>Images</span><strong>${project.counts.images}</strong></div>
-      <div class="project-stat"><span>Uncollected</span><strong>${project.uncollectedCount || 0}</strong></div>
-    </div>
-    <div class="message-text">${summarizeProjectRecordMix(project)}</div>
-    <div class="source-badges">${sourceBadges || '<span class="message-text">No sources saved yet.</span>'}</div>
+    <div class="message-text">${summaryParts.join(" · ")}</div>
     <div class="message-text">Updated ${formatDate(project.updatedAt)}</div>
   `;
 }
