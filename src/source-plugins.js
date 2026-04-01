@@ -299,11 +299,13 @@
             ""
           );
           const downloadHref = document.querySelector(".button_download")?.getAttribute("href") || "";
-          const imageUrl = helpers.normalizeUrl(
-            downloadHref ||
+          const previewImageUrl = helpers.normalizeUrl(
+            document.querySelector("#download_confirmation img")?.getAttribute("src") ||
+            document.querySelector(".lgePreview")?.getAttribute("src") ||
             document.querySelector("#noscript_fallback")?.getAttribute("src") ||
             helpers.pickMeta('meta[property="og:image"]')
           );
+          const imageUrl = helpers.normalizeUrl(previewImageUrl || downloadHref);
           const brn = helpers.cleanText(document.querySelector(".the_brn")?.textContent || "");
           const viewAllUrl = helpers.normalizeUrl(document.querySelector(".header_meta_links a")?.href || "");
           const metadataFields = [];
@@ -327,7 +329,8 @@
               helpers.normalizeUrl(permalink),
               catalogueUrl,
               viewAllUrl,
-              imageUrl
+              imageUrl,
+              helpers.normalizeUrl(downloadHref)
             ],
             citation,
             description: metadataFields.map((field) => field.label + ": " + field.value).join(" "),
@@ -610,10 +613,14 @@
             return false;
           }
           let host = "";
+          let hrefPathWithSearch = "";
           try {
-            host = new URL(href).hostname.toLowerCase();
+            const parsedHref = new URL(href);
+            host = parsedHref.hostname.toLowerCase();
+            hrefPathWithSearch = (parsedHref.pathname + parsedHref.search).toLowerCase();
           } catch {
             host = location.hostname.toLowerCase();
+            hrefPathWithSearch = "";
           }
           const text = cleanText(anchor.textContent);
           if (host === "trove.nla.gov.au") {
@@ -642,8 +649,8 @@
               return false;
             }
             return Boolean(
-              /https?:\/\/purl\.slwa\.wa\.gov\.au\/[a-z0-9_./-]+/i.test(href) ||
-              /https?:\/\/catalogue\.slwa\.wa\.gov\.au\/record=b\d+~S\d+/i.test(href)
+              host === "purl.slwa.wa.gov.au" ||
+              (host === "catalogue.slwa.wa.gov.au" && hrefPathWithSearch.includes("/record=b"))
             ) && Boolean(anchor.closest(".viewPanel, .briefcitDetail, .browseEntry, .bibRecordLink, .page"));
           }
           if (host === "museum.wa.gov.au") {

@@ -302,7 +302,9 @@ function getItemAttachments(item) {
 }
 
 function hasFullResolutionImage(entry) {
-  return /\/download\/.+\.(jpg|jpeg|png|tif|tiff|webp)(\?|$)/i.test(entry?.imageUrl || "");
+  return /\/(?:download\/)?slwa_[a-z0-9_./-]+\.(jpg|jpeg|png|tif|tiff|webp)(\?|$)|\/download\/.+\.(jpg|jpeg|png|tif|tiff|webp)(\?|$)/i.test(
+    entry?.imageUrl || ""
+  );
 }
 
 function hasInlinePreviewForActiveTab() {
@@ -884,23 +886,27 @@ function nudgeWebviewLayout(tab) {
   }
   const script = `
     (() => {
-      window.dispatchEvent(new Event("resize"));
-      document.dispatchEvent(new Event("visibilitychange"));
-      const fallbackHeight = Math.max(window.innerHeight - 120, 480);
-      const layoutRoot = document.querySelector("#ui-layout-main");
-      if (layoutRoot && layoutRoot.getBoundingClientRect().height === 0) {
-        layoutRoot.style.minHeight = fallbackHeight + "px";
+      try {
+        const fallbackHeight = Math.max(window.innerHeight - 120, 480);
+        const layoutRoot = document.querySelector("#ui-layout-main");
+        if (layoutRoot && layoutRoot.getBoundingClientRect().height === 0) {
+          layoutRoot.style.minHeight = fallbackHeight + "px";
+        }
+        if (document.documentElement) {
+          document.documentElement.style.minHeight = Math.max(document.documentElement.clientHeight, fallbackHeight) + "px";
+        }
+        if (document.body) {
+          document.body.style.minHeight = Math.max(document.body.clientHeight, fallbackHeight) + "px";
+        }
+        return {
+          innerHeight: window.innerHeight,
+          layoutHeight: layoutRoot ? layoutRoot.getBoundingClientRect().height : null
+        };
+      } catch (error) {
+        return {
+          error: String(error?.message || error || "layout nudge failed")
+        };
       }
-      if (document.documentElement) {
-        document.documentElement.style.minHeight = Math.max(document.documentElement.clientHeight, fallbackHeight) + "px";
-      }
-      if (document.body) {
-        document.body.style.minHeight = Math.max(document.body.clientHeight, fallbackHeight) + "px";
-      }
-      return {
-        innerHeight: window.innerHeight,
-        layoutHeight: layoutRoot ? layoutRoot.getBoundingClientRect().height : null
-      };
     })();
   `;
 
@@ -920,57 +926,65 @@ function dismissPageObstructions(tab) {
   }
   const script = `
     (() => {
-      const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
-      const buttonCandidates = [];
-      const overlayRoots = Array.from(
-        document.querySelectorAll('[role="dialog"], .modal, .dialog, .popup, [aria-modal="true"]')
-      );
-      const exactMatchers = [/don't show cultural advice/i, /dont show cultural advice/i, /^close$/i, /^dismiss$/i];
-      const fuzzyMatchers = [/close/i, /dismiss/i, /skip/i];
-      const collectButtons = (root) =>
-        Array.from(root.querySelectorAll('button, [role="button"], a')).filter((node) => {
-          const combined = [
-            node.textContent,
-            node.getAttribute("aria-label"),
-            node.getAttribute("title"),
-            node.className
-          ].join(" ");
-          return fuzzyMatchers.some((pattern) => pattern.test(combined));
-        });
-
-      for (const root of overlayRoots) {
-        buttonCandidates.push(...collectButtons(root));
-      }
-      if (!buttonCandidates.length) {
-        buttonCandidates.push(
-          ...Array.from(document.querySelectorAll('button, [role="button"], a')).filter((node) => {
+      try {
+        const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+        const buttonCandidates = [];
+        const overlayRoots = Array.from(
+          document.querySelectorAll('[role="dialog"], .modal, .dialog, .popup, [aria-modal="true"]')
+        );
+        const exactMatchers = [/don't show cultural advice/i, /dont show cultural advice/i, /^close$/i, /^dismiss$/i];
+        const fuzzyMatchers = [/close/i, /dismiss/i, /skip/i];
+        const collectButtons = (root) =>
+          Array.from(root.querySelectorAll('button, [role="button"], a')).filter((node) => {
             const combined = [
               node.textContent,
               node.getAttribute("aria-label"),
               node.getAttribute("title"),
               node.className
             ].join(" ");
-            return /don't show cultural advice|dont show cultural advice/i.test(combined);
-          })
-        );
-      }
+            return fuzzyMatchers.some((pattern) => pattern.test(combined));
+          });
 
-      const best =
-        buttonCandidates.find((node) => {
-          const value = normalize([
-            node.textContent,
-            node.getAttribute("aria-label"),
-            node.getAttribute("title")
-          ].join(" "));
-          return exactMatchers.some((pattern) => pattern.test(value));
-        }) ||
-        buttonCandidates[0];
+        for (const root of overlayRoots) {
+          buttonCandidates.push(...collectButtons(root));
+        }
+        if (!buttonCandidates.length) {
+          buttonCandidates.push(
+            ...Array.from(document.querySelectorAll('button, [role="button"], a')).filter((node) => {
+              const combined = [
+                node.textContent,
+                node.getAttribute("aria-label"),
+                node.getAttribute("title"),
+                node.className
+              ].join(" ");
+              return /don't show cultural advice|dont show cultural advice/i.test(combined);
+            })
+          );
+        }
 
-      if (best) {
-        best.click();
-        return true;
+        const best =
+          buttonCandidates.find((node) => {
+            const value = normalize([
+              node.textContent,
+              node.getAttribute("aria-label"),
+              node.getAttribute("title")
+            ].join(" "));
+            return exactMatchers.some((pattern) => pattern.test(value));
+          }) ||
+          buttonCandidates[0];
+
+        if (best) {
+          try {
+            best.click();
+            return true;
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      } catch {
+        return false;
       }
-      return false;
     })();
   `;
 
@@ -1631,22 +1645,34 @@ async function resolveSlwaBridgeUrlFromWebview(webview) {
 
   const script = `
     (() => {
-      const dismissModal = () => {
-        const modal = document.querySelector("#culturalModal");
-        if (!modal) {
-          return;
+      try {
+        const dismissModal = () => {
+          const modal = document.querySelector("#culturalModal");
+          if (!modal) {
+            return;
+          }
+          const closeButton =
+            modal.querySelector("button.close, .close, [data-dismiss='modal'], .btn-primary, button, a");
+          try {
+            closeButton?.click?.();
+          } catch {
+            // Ignore site-specific click failures.
+          }
+        };
+        dismissModal();
+        const locateButton = document.querySelector("button.work-actions-borrow");
+        try {
+          locateButton?.click?.();
+        } catch {
+          // Ignore site-specific click failures.
         }
-        const closeButton =
-          modal.querySelector("button.close, .close, [data-dismiss='modal'], .btn-primary, button, a");
-        closeButton?.click?.();
-      };
-      dismissModal();
-      const locateButton = document.querySelector("button.work-actions-borrow");
-      locateButton?.click?.();
-      const holdingLink = Array.from(document.querySelectorAll("a[href]")).find((anchor) =>
-        /purl\\.slwa\\.wa\\.gov\\.au|catalogue\\.slwa\\.wa\\.gov\\.au/i.test(anchor.href)
-      );
-      return holdingLink?.href || "";
+        const holdingLink = Array.from(document.querySelectorAll("a[href]")).find((anchor) =>
+          /purl\\.slwa\\.wa\\.gov\\.au|catalogue\\.slwa\\.wa\\.gov\\.au/i.test(anchor.href)
+        );
+        return holdingLink?.href || "";
+      } catch {
+        return "";
+      }
     })();
   `;
 
@@ -1654,12 +1680,27 @@ async function resolveSlwaBridgeUrlFromWebview(webview) {
 }
 
 async function maybeBridgeCurrentPageItem(item, activeTab) {
-  if (
-    !item?.supported ||
-    item.source !== "trove" ||
-    !/state library of wa|state library of western australia/i.test(item.contributor || "")
-  ) {
+  if (!item?.supported || item.source !== "trove" || !/\/work\/\d+/i.test(item.url || activeTab?.url || "")) {
     return item;
+  }
+
+  try {
+    const bridgedFromBackground = await fetchItemByUrl(item.url || activeTab?.url || "", {
+      force: true,
+      mode: "preview"
+    });
+    if (bridgedFromBackground?.supported && bridgedFromBackground.source === "slwa") {
+      bridgedFromBackground.aliases = [
+        ...new Set([...(bridgedFromBackground.aliases || []), item.url, ...(item.aliases || [])])
+      ];
+      bridgedFromBackground.bridgedFrom = {
+        source: item.source,
+        url: item.url
+      };
+      return bridgedFromBackground;
+    }
+  } catch {
+    // Fall back to the live in-page bridge below.
   }
 
   const bridgeUrl = await resolveSlwaBridgeUrlFromWebview(activeTab?.webview);
@@ -1689,7 +1730,7 @@ async function maybeHydrateSlwaCurrentPageItem(item) {
     Boolean(item.viewAllUrl) ||
     (Array.isArray(item.viewerUrls) && item.viewerUrls.length > 1) ||
     /encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i.test(item.url || "") ||
-    attachments.some((entry) => entry.imageUrl && !/\/download\/.+\.(jpg|jpeg|png|tif|tiff|webp)$/i.test(entry.imageUrl));
+    attachments.some((entry) => entry.imageUrl && !hasFullResolutionImage(entry));
   if (!needsHydration) {
     return item;
   }
@@ -1960,6 +2001,30 @@ async function updateCaptureState() {
   let item = await extractCurrentItem();
   if (requestId !== state.captureRequestId) {
     return;
+  }
+
+  if (!item?.supported) {
+    const activeUrl = activeTab.url || "";
+    let activeHostname = "";
+    try {
+      activeHostname = new URL(activeUrl).hostname.toLowerCase();
+    } catch {
+      activeHostname = "";
+    }
+    if (
+      activeHostname &&
+      ["trove.nla.gov.au", "catalogue.slwa.wa.gov.au", "encore.slwa.wa.gov.au", "purl.slwa.wa.gov.au", "museum.wa.gov.au"].includes(
+        activeHostname
+      )
+    ) {
+      const fallback = await fetchItemByUrl(activeUrl, { force: true, mode: "preview" });
+      if (requestId !== state.captureRequestId) {
+        return;
+      }
+      if (fallback?.supported) {
+        item = fallback;
+      }
+    }
   }
 
   if (!item?.supported) {

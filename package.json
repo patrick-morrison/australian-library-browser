@@ -13,7 +13,9 @@
     "test:store": "node scripts/test-project-store-edge-cases.js",
     "test:e2e": "node scripts/test-electron-smoke.js",
     "test:fixtures": "node scripts/test-source-fixtures.js",
+    "test:audit-live": "node scripts/audit-live-projects.js",
     "inspect:pages": "node scripts/inspect-pages.js",
+    "debug:inline": "node scripts/debug-inline-actions.js",
     "probe:source": "node scripts/probe-source.js",
     "collect:curated": "node scripts/collect-curated-projects.js"
   },
