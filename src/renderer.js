@@ -1,0 +1,2284 @@
+const sourceRegistry = window.CollectionSourcePlugins;
+const WEBVIEW_PARTITION = "persist:trove-library";
+
+const state = {
+  projects: [],
+  activeProjectPath: "",
+  tabs: [],
+  activeTabId: "",
+  plugins: sourceRegistry.listPlugins(),
+  selectedProjectDirectory: "",
+  mode: "collect",
+  manageFilter: "all",
+  manageQuery: "",
+  debugOpen: false,
+  captureRequestId: 0,
+  sidebarWidth: 360,
+  manageRenderToken: 0
+};
+
+const elements = {
+  projectForm: document.getElementById("project-form"),
+  projectNameInput: document.getElementById("project-name"),
+  chooseProjectLocation: document.getElementById("choose-project-location"),
+  projectLocation: document.getElementById("project-location"),
+  modeCollect: document.getElementById("mode-collect"),
+  modeManage: document.getElementById("mode-manage"),
+  modeProjects: document.getElementById("mode-projects"),
+  modePlugins: document.getElementById("mode-plugins"),
+  projectCount: document.getElementById("project-count"),
+  projectList: document.getElementById("project-list"),
+  projectDetails: document.getElementById("project-details"),
+  recentSaves: document.getElementById("recent-saves"),
+  sourceList: document.getElementById("source-list"),
+  projectsFocus: document.getElementById("projects-focus"),
+  projectsWorkflow: document.getElementById("projects-workflow"),
+  projectsActivity: document.getElementById("projects-activity"),
+  pluginsSupported: document.getElementById("plugins-supported"),
+  openProjectFolder: document.getElementById("open-project-folder"),
+  sidebarResizer: document.getElementById("sidebar-resizer"),
+  addressForm: document.getElementById("address-form"),
+  addressInput: document.getElementById("address-input"),
+  tabs: document.getElementById("tabs"),
+  collectView: document.getElementById("collect-view"),
+  manageView: document.getElementById("manage-view"),
+  projectsView: document.getElementById("projects-view"),
+  pluginsView: document.getElementById("plugins-view"),
+  manageSummary: document.getElementById("manage-summary"),
+  manageList: document.getElementById("manage-list"),
+  manageSearch: document.getElementById("manage-search"),
+  filterAll: document.getElementById("filter-all"),
+  filterSaved: document.getElementById("filter-saved"),
+  filterIgnored: document.getElementById("filter-ignored"),
+  filterUncollected: document.getElementById("filter-uncollected"),
+  openItemsCsv: document.getElementById("open-items-csv"),
+  webviewStack: document.getElementById("webview-stack"),
+  backButton: document.getElementById("back-button"),
+  forwardButton: document.getElementById("forward-button"),
+  reloadButton: document.getElementById("reload-button"),
+  newTabButton: document.getElementById("new-tab-button"),
+  debugToggle: document.getElementById("debug-toggle"),
+  pageStatus: document.getElementById("page-status"),
+  pageKind: document.getElementById("page-kind"),
+  message: document.getElementById("message"),
+  capturePanel: document.getElementById("capture-panel"),
+  captureEmpty: document.getElementById("capture-empty"),
+  captureBody: document.getElementById("capture-body"),
+  captureState: document.getElementById("capture-state"),
+  captureOpenPage: document.getElementById("capture-open-page"),
+  captureIgnore: document.getElementById("capture-ignore"),
+  captureCollect: document.getElementById("capture-collect"),
+  captureImageSection: document.getElementById("capture-image-section"),
+  captureImageGallery: document.getElementById("capture-image-gallery"),
+  captureMarkdown: document.getElementById("capture-markdown"),
+  pluginSeedUrls: document.getElementById("plugin-seed-urls"),
+  pluginCopyPrompt: document.getElementById("plugin-copy-prompt"),
+  pluginCopyProbeCommand: document.getElementById("plugin-copy-probe-command"),
+  pluginPromptOutput: document.getElementById("plugin-prompt-output"),
+  pluginStatus: document.getElementById("plugin-status"),
+  debugDrawer: document.getElementById("debug-drawer"),
+  debugClose: document.getElementById("debug-close"),
+  debugSavePage: document.getElementById("debug-save-page"),
+  debugSaveItem: document.getElementById("debug-save-item"),
+  debugSavePreview: document.getElementById("debug-save-preview"),
+  debugForm: document.getElementById("debug-form"),
+  debugCommand: document.getElementById("debug-command"),
+  debugOutput: document.getElementById("debug-output"),
+  debugCwd: document.getElementById("debug-cwd"),
+  projectCardTemplate: document.getElementById("project-card-template"),
+  recentItemTemplate: document.getElementById("recent-item-template"),
+  manageItemTemplate: document.getElementById("manage-item-template")
+};
+
+const previewState = {
+  item: null,
+  markdown: "",
+  origin: "page",
+  tabId: "",
+  pageUrl: "",
+  imageIndex: 0
+};
+
+const backgroundFetchCache = new Map();
+let webviewResizeObserver = null;
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+}
+
+function renderMarkdownHtml(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const chunks = [];
+  let paragraph = [];
+  let listItems = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) {
+      return;
+    }
+    chunks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!listItems.length) {
+      return;
+    }
+    chunks.push(`<ul>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`);
+    listItems = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      chunks.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+    const bullet = trimmed.match(/^- (.*)$/);
+    if (bullet) {
+      flushParagraph();
+      listItems.push(bullet[1]);
+      continue;
+    }
+    if (trimmed === "---") {
+      flushParagraph();
+      flushList();
+      chunks.push("<hr>");
+      continue;
+    }
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  return chunks.join("");
+}
+
+function applySidebarWidth() {
+  document.querySelector(".app-shell")?.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
+}
+
+function getActiveProject() {
+  return state.projects.find((project) => project.path === state.activeProjectPath) || null;
+}
+
+function getActiveTab() {
+  return state.tabs.find((tab) => tab.id === state.activeTabId) || null;
+}
+
+function getDefaultBrowseUrl() {
+  return state.plugins[0]?.browseUrl || "https://trove.nla.gov.au/";
+}
+
+function getDefaultSearchUrl(query) {
+  return `https://trove.nla.gov.au/search?keyword=${encodeURIComponent(query)}`;
+}
+
+function ensureUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return getDefaultBrowseUrl();
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("trove.nla.gov.au") || trimmed.startsWith("encore.slwa.wa.gov.au") || trimmed.startsWith("purl.slwa.wa.gov.au")) {
+    return `https://${trimmed}`;
+  }
+  return getDefaultSearchUrl(trimmed);
+}
+
+function formatDate(value) {
+  if (!value) {
+    return "";
+  }
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+function setMessage(text) {
+  elements.message.textContent = text;
+}
+
+function getCaptureContext() {
+  const activeTab = getActiveTab();
+  return {
+    tabId: activeTab?.id || "",
+    pageUrl: activeTab?.url || ""
+  };
+}
+
+function clearPreviewState() {
+  previewState.item = null;
+  previewState.markdown = "";
+  previewState.origin = "page";
+  previewState.tabId = "";
+  previewState.pageUrl = "";
+  previewState.imageIndex = 0;
+}
+
+function setPreviewState(item, markdown, origin = "page", context = getCaptureContext()) {
+  previewState.item = item || null;
+  previewState.markdown = markdown || "";
+  previewState.origin = origin;
+  previewState.tabId = context.tabId || "";
+  previewState.pageUrl = context.pageUrl || "";
+  previewState.imageIndex = 0;
+}
+
+function getDisplayedItem() {
+  return previewState.item || null;
+}
+
+function getDisplayedMarkdown() {
+  return previewState.markdown || "";
+}
+
+function hasMeaningfulItemTitle(item) {
+  const title = String(item?.title || "").trim();
+  if (!title) {
+    return false;
+  }
+  return !/^[-–—]?\s*details\b/i.test(title);
+}
+
+function isStableExtractedItem(item) {
+  if (!item?.supported) {
+    return false;
+  }
+  if (!hasMeaningfulItemTitle(item)) {
+    return false;
+  }
+  if (item.source === "trove" && /\/work\/\d+/i.test(item.url || "")) {
+    return Boolean(item.imageUrl || item.contributor || (item.metadataFields || []).length);
+  }
+  return true;
+}
+
+function getItemAttachments(item) {
+  if (Array.isArray(item?.attachments) && item.attachments.length) {
+    return item.attachments;
+  }
+  if (item?.imageUrl) {
+    return [
+      {
+        id: item.id || "",
+        title: item.title || "",
+        viewerUrl: item.url || "",
+        imageUrl: item.imageUrl,
+        thumbnailUrl: item.imageUrl
+      }
+    ];
+  }
+  return [];
+}
+
+function hasFullResolutionImage(entry) {
+  return /\/download\/.+\.(jpg|jpeg|png|tif|tiff|webp)(\?|$)/i.test(entry?.imageUrl || "");
+}
+
+function hasInlinePreviewForActiveTab() {
+  const activeTab = getActiveTab();
+  return Boolean(
+    activeTab &&
+      previewState.item &&
+      previewState.origin === "link" &&
+      previewState.tabId === activeTab.id &&
+      previewState.pageUrl === activeTab.url
+  );
+}
+
+function resetCapturePane(message, kind = "Preview") {
+  elements.captureEmpty.textContent = message;
+  elements.captureBody.hidden = true;
+  elements.captureEmpty.hidden = false;
+  elements.captureIgnore.disabled = true;
+  elements.captureCollect.disabled = true;
+  elements.captureOpenPage.disabled = true;
+  elements.captureState.hidden = true;
+  elements.captureState.textContent = "";
+  elements.captureState.className = "capture-state";
+  elements.captureImageSection.hidden = true;
+  elements.captureImageGallery.innerHTML = "";
+  elements.captureMarkdown.textContent = "";
+}
+
+function renderCapturePane(item, markdown, options = {}) {
+  const project = getActiveProject();
+  const status = options.forcedStatus || sourceRegistry.itemStatus(project, item);
+  elements.captureState.hidden = !status;
+  elements.captureState.textContent = status === "saved" ? "Collected" : "Ignored";
+  elements.captureState.className = "capture-state";
+  if (status === "saved") {
+    elements.captureState.classList.add("item-state-saved");
+  } else if (status === "ignored") {
+    elements.captureState.classList.add("item-state-ignored");
+  }
+  elements.captureOpenPage.disabled = !item.url;
+  elements.captureIgnore.disabled = !project;
+  elements.captureCollect.disabled = !project;
+  const attachments = getItemAttachments(item);
+  const isImageSet = item.type === "image" && attachments.length > 1;
+  elements.captureCollect.textContent =
+    status === "saved" ? "Collected" : isImageSet ? `Collect All (${attachments.length})` : "Collect";
+  elements.captureIgnore.textContent = status === "ignored" ? "Unignore" : "Ignore";
+  elements.captureCollect.classList.toggle("is-complete", status === "saved");
+  elements.captureIgnore.classList.toggle("is-complete", status === "ignored");
+  elements.captureIgnore.classList.toggle("is-ignored-state", status === "ignored");
+  const showImage = item.type === "image" && attachments.length > 0;
+  elements.captureImageSection.hidden = !showImage;
+  if (showImage) {
+    const selectedIndex = Math.max(0, Math.min(previewState.imageIndex || 0, attachments.length - 1));
+    const selected = attachments[selectedIndex] || attachments[0];
+    const mainSrc = escapeHtml(selected.imageUrl || selected.thumbnailUrl || "");
+    const mainTitle = escapeHtml(selected.title || item.title || `Image ${selectedIndex + 1}`);
+    const mainHref = escapeHtml(selected.viewerUrl || item.url || "");
+    const thumbs =
+      attachments.length > 1
+        ? `<div class="capture-thumbnail-strip">${attachments
+            .map((entry, index) => {
+              const src = escapeHtml(entry.thumbnailUrl || entry.imageUrl || "");
+              const title = escapeHtml(entry.title || item.title || `Image ${index + 1}`);
+              const selectedClass = index === selectedIndex ? " is-selected" : "";
+              return `<button type="button" class="capture-thumbnail${selectedClass}" data-preview-image-index="${index}" aria-label="Preview ${title}">
+                <img src="${src}" alt="${title}">
+              </button>`;
+            })
+            .join("")}</div>`
+        : "";
+    elements.captureImageGallery.innerHTML = `
+      <figure class="capture-gallery-item capture-gallery-primary">
+        ${mainHref ? `<a href="${mainHref}" class="capture-gallery-link" data-open-external="${mainHref}">` : ""}
+        <img src="${mainSrc}" alt="${mainTitle}">
+        ${mainHref ? "</a>" : ""}
+        <figcaption>${mainTitle}</figcaption>
+      </figure>
+      ${thumbs}
+    `;
+  } else {
+    elements.captureImageGallery.innerHTML = "";
+  }
+  elements.captureMarkdown.innerHTML = renderMarkdownHtml(markdown);
+  elements.captureEmpty.hidden = true;
+  elements.captureBody.hidden = false;
+}
+
+async function applyImmediatePageFeedback(item, status) {
+  const activeTab = getActiveTab();
+  if (!activeTab?.webview?.isConnected || !item) {
+    return;
+  }
+  const urls = [...new Set([item.url, ...(item.aliases || [])].filter(Boolean))];
+  if (!urls.length) {
+    return;
+  }
+  const script = sourceRegistry.buildImmediateStatusScript({ status, urls });
+  await activeTab.webview.executeJavaScript(script, true).catch(() => {});
+}
+
+function renderProjectLocation() {
+  elements.projectLocation.textContent = state.selectedProjectDirectory
+    ? `New libraries will be created in ${state.selectedProjectDirectory}`
+    : "Saving new libraries in this workspace by default.";
+}
+
+function formatItemType(type) {
+  if (type === "image") {
+    return "image record";
+  }
+  if (type === "text") {
+    return "text record";
+  }
+  return "newspaper article";
+}
+
+function formatItemTypeBadge(type) {
+  if (type === "image") {
+    return "Image";
+  }
+  if (type === "text") {
+    return "Text";
+  }
+  return "Article";
+}
+
+function resolveItemLocalTargets(project, item) {
+  if (!project || !item) {
+    return [];
+  }
+  return [
+    ...(Array.isArray(item.metadataFiles) ? item.metadataFiles : item.metadataFile ? [item.metadataFile] : []),
+    ...(Array.isArray(item.assetFiles) ? item.assetFiles : item.assetFile ? [item.assetFile] : []),
+    ...(item.file ? [item.file] : [])
+  ]
+    .filter(Boolean)
+    .map((target) => `${project.path}/${target}`);
+}
+
+function summarizeNativeRecord(item) {
+  if (!item) {
+    return "saved";
+  }
+  const assetCount = Array.isArray(item.assetFiles) ? item.assetFiles.length : item.assetFile ? 1 : 0;
+  const metadataCount = Array.isArray(item.metadataFiles) ? item.metadataFiles.length : item.metadataFile ? 1 : 0;
+  if (item.type === "image") {
+    if (assetCount && metadataCount) {
+      return `${assetCount} image${assetCount === 1 ? "" : "s"} + ${metadataCount} sidecar${metadataCount === 1 ? "" : "s"}`;
+    }
+    if (assetCount) {
+      return `${assetCount} image${assetCount === 1 ? "" : "s"} saved`;
+    }
+    if (metadataCount) {
+      return `${metadataCount} metadata sidecar${metadataCount === 1 ? "" : "s"}`;
+    }
+    return "image record";
+  }
+  if (item.file) {
+    return "markdown saved";
+  }
+  if (metadataCount) {
+    return `${metadataCount} metadata sidecar${metadataCount === 1 ? "" : "s"}`;
+  }
+  return "saved";
+}
+
+function resolveItemMarkdownPath(project, item) {
+  if (!project || !item) {
+    return "";
+  }
+  if (item.file) {
+    return `${project.path}/${item.file}`;
+  }
+  const metadataFile = Array.isArray(item.metadataFiles)
+    ? item.metadataFiles.find(Boolean)
+    : item.metadataFile || "";
+  return metadataFile ? `${project.path}/${metadataFile}` : "";
+}
+
+async function loadManageItemMarkdown(project, item) {
+  const markdownPath = resolveItemMarkdownPath(project, item);
+  if (markdownPath) {
+    try {
+      return await window.troveApi.readTextFile(markdownPath);
+    } catch {
+      // Fall back to synthesized markdown when the sidecar is missing.
+    }
+  }
+  return window.troveApi.previewMarkdown(item);
+}
+
+function getManageItemImageSource(item) {
+  if (item?.type !== "image") {
+    return "";
+  }
+  return item.imageUrl || (Array.isArray(item.imageUrls) ? item.imageUrls.find(Boolean) : "") || "";
+}
+
+async function populateManageCard(card, project, item, renderToken) {
+  const imageWrap = card.querySelector(".manage-item-image-wrap");
+  const imageNode = card.querySelector(".manage-item-image");
+  const markdownNode = card.querySelector(".manage-item-markdown");
+  const imageSource = getManageItemImageSource(item);
+
+  if (imageSource) {
+    imageWrap.hidden = false;
+    imageNode.src = imageSource;
+    imageNode.alt = item.title || "";
+  } else {
+    imageWrap.hidden = true;
+    imageNode.removeAttribute("src");
+    imageNode.alt = "";
+  }
+
+  try {
+    const markdown = await loadManageItemMarkdown(project, item);
+    if (renderToken !== state.manageRenderToken) {
+      return;
+    }
+    markdownNode.innerHTML = renderMarkdownHtml(markdown);
+  } catch {
+    if (renderToken !== state.manageRenderToken) {
+      return;
+    }
+    markdownNode.textContent = "Markdown preview unavailable.";
+  }
+}
+
+async function openItemInApp(item) {
+  if (!item?.url) {
+    return;
+  }
+  setMode("collect");
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    activeTab.webview.loadURL(item.url);
+  } else {
+    createTab(item.url);
+  }
+}
+
+function summarizeProjectRecordMix(project) {
+  if (!project) {
+    return "";
+  }
+  const textCount = project.counts.texts || project.counts.newspapers || 0;
+  const imageCount = project.counts.images || 0;
+  const ignoredCount = project.ignoredCount || 0;
+  const uncollectedCount = project.uncollectedCount || 0;
+  return `${textCount} texts · ${imageCount} images · ${ignoredCount} ignored · ${uncollectedCount} uncollected`;
+}
+
+function getPluginSeedUrls() {
+  return String(elements.pluginSeedUrls?.value || "")
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function buildPluginPrompt(urls) {
+  const seeds = urls.length ? urls.map((url) => `- ${url}`).join("\n") : "- https://example-library/search?q=wellington+dam";
+  return `Use the trove-browser repo to reverse engineer a new collection source integration.
+
+Source URLs:
+${seeds}
+
+Workflow:
+1. Run \`npm run probe:source -- "<url1>" "<url2>" ...\` on the seed URLs.
+2. Inspect the screenshots and DOM summaries from the probe output.
+3. Add fixture coverage for search/detail/media variants.
+4. Implement a source adapter and inline-result-link heuristics.
+5. Verify with \`npm run test:fixtures\`, \`npm run test:e2e\`, and fresh Electron screenshots.
+6. Keep the browser footprint minimal and the collect sidebar focused on preview + collect/ignore.
+
+Constraints:
+- Degrade cleanly when a page is unsupported.
+- Only add inline Preview/Collect controls to actual entry/result links.
+- Save text records as markdown and image records as image + markdown sidecar.
+- Preserve saved/ignored alias recognition.
+
+If the site blocks automated browsing, say so explicitly and identify the smallest missing input needed from me to finish the integration in one more round.`;
+}
+
+function buildPluginProbeCommand(urls) {
+  if (!urls.length) {
+    return 'npm run probe:source -- "https://example-library/search?q=wellington+dam"';
+  }
+  return `npm run probe:source -- ${urls.map((url) => `"${url}"`).join(" ")}`;
+}
+
+function renderPluginIntake() {
+  const urls = getPluginSeedUrls();
+  elements.pluginPromptOutput.textContent = buildPluginPrompt(urls);
+  elements.pluginStatus.textContent = urls.length
+    ? `Ready to probe ${urls.length} URL${urls.length === 1 ? "" : "s"} and generate a new-source integration prompt.`
+    : "Paste URLs to generate a reusable Codex/Claude integration prompt.";
+}
+
+function renderMode() {
+  document.querySelector(".app-shell")?.classList.remove("mode-collect", "mode-manage", "mode-projects", "mode-plugins");
+  document.querySelector(".app-shell")?.classList.add(`mode-${state.mode}`);
+  elements.modeCollect.classList.toggle("is-active", state.mode === "collect");
+  elements.modeManage.classList.toggle("is-active", state.mode === "manage");
+  elements.modeProjects.classList.toggle("is-active", state.mode === "projects");
+  elements.modePlugins.classList.toggle("is-active", state.mode === "plugins");
+  elements.collectView.hidden = state.mode !== "collect";
+  elements.manageView.hidden = state.mode !== "manage";
+  elements.projectsView.hidden = state.mode !== "projects";
+  elements.pluginsView.hidden = state.mode !== "plugins";
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  renderMode();
+  renderProjectDetails();
+  renderRecentSaves();
+  renderProjectsWorkspace();
+  renderPluginIntake();
+}
+
+function getDebugCwd() {
+  return getActiveProject()?.path || "";
+}
+
+function renderDebugCwd() {
+  elements.debugCwd.textContent = getDebugCwd()
+    ? `Running in ${getDebugCwd()}`
+    : "Running in workspace root.";
+}
+
+function toggleDebugDrawer(forceOpen = !state.debugOpen) {
+  state.debugOpen = forceOpen;
+  elements.debugDrawer.hidden = !state.debugOpen;
+  if (state.debugOpen) {
+    renderDebugCwd();
+    elements.debugCommand.focus();
+  }
+}
+
+function isWebviewReady(tab) {
+  return Boolean(tab && tab.didDomReady && tab.webview?.isConnected);
+}
+
+function safeCanGo(tab, direction) {
+  if (!isWebviewReady(tab)) {
+    return false;
+  }
+  try {
+    return direction === "back" ? tab.webview.canGoBack() : tab.webview.canGoForward();
+  } catch {
+    return false;
+  }
+}
+
+function openUrlInTab(url = getDefaultBrowseUrl(), options = {}) {
+  const { activate = true } = options;
+  const id = `tab-${crypto.randomUUID()}`;
+  const webview = document.createElement("webview");
+  webview.src = url;
+  webview.className = "browser-webview";
+  if (activate) {
+    webview.classList.add("is-active");
+  }
+  webview.setAttribute("partition", WEBVIEW_PARTITION);
+  webview.setAttribute("useragent", navigator.userAgent.replace(/\s*Electron\/[^\s]+/i, ""));
+
+  const tab = {
+    id,
+    url,
+    title: "New tab",
+    webview,
+    didDomReady: false,
+    lastItem: null,
+    extractionToken: "",
+    extractionPromise: null,
+    decorationSignature: "",
+    refreshTimer: null
+  };
+
+  bindWebview(tab);
+  state.tabs.push(tab);
+  elements.webviewStack.append(webview);
+  syncWebviewElementSize(tab);
+  if (activate) {
+    setActiveTab(id);
+  } else {
+    renderTabs();
+    updateNavigationButtons();
+  }
+  return tab;
+}
+
+function createTab(url = getDefaultBrowseUrl()) {
+  return openUrlInTab(url, { activate: true });
+}
+
+function openBackgroundTab(url) {
+  return openUrlInTab(url, { activate: false });
+}
+
+function openTabFromPayload(payload) {
+  const nextUrl = ensureUrl(typeof payload === "string" ? payload : payload?.url || "");
+  if (!nextUrl) {
+    return null;
+  }
+  const activate = typeof payload === "string" ? true : payload?.activate !== false;
+  return activate ? createTab(nextUrl) : openBackgroundTab(nextUrl);
+}
+
+function installBrowserPageLinkInterceptors(tab) {
+  if (!tab?.webview?.isConnected) {
+    return;
+  }
+
+  const script = `
+    (() => {
+      if (window.__troveLibraryBrowserNavInstalled) {
+        return;
+      }
+      window.__troveLibraryBrowserNavInstalled = true;
+      const prefix = "__trove_library_browser_action__";
+      const emit = (payload) => console.log(prefix + JSON.stringify(payload));
+      const findAnchor = (target) => (target instanceof Element ? target.closest("a[href]") : null);
+
+      document.addEventListener(
+        "click",
+        (event) => {
+          const anchor = findAnchor(event.target);
+          if (!anchor?.href || anchor.href.startsWith("javascript:")) {
+            return;
+          }
+          const wantsNewTab =
+            event.button === 1 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            anchor.target === "_blank";
+          if (!wantsNewTab) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          emit({
+            action: "open-tab",
+            url: anchor.href,
+            activate: Boolean(event.shiftKey || anchor.target === "_blank")
+          });
+        },
+        true
+      );
+
+      document.addEventListener(
+        "auxclick",
+        (event) => {
+          if (event.button !== 1) {
+            return;
+          }
+          const anchor = findAnchor(event.target);
+          if (!anchor?.href || anchor.href.startsWith("javascript:")) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          emit({
+            action: "open-tab",
+            url: anchor.href,
+            activate: false
+          });
+        },
+        true
+      );
+    })();
+  `;
+
+  void tab.webview.executeJavaScript(script, true).catch(() => {});
+}
+
+function closeTab(tabId) {
+  if (state.tabs.length === 1) {
+    return;
+  }
+
+  const index = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (index === -1) {
+    return;
+  }
+
+  const [tab] = state.tabs.splice(index, 1);
+  if (tab.refreshTimer) {
+    clearTimeout(tab.refreshTimer);
+  }
+  if (previewState.tabId === tab.id) {
+    clearPreviewState();
+  }
+  tab.webview.remove();
+
+  if (state.activeTabId === tabId) {
+    const fallback = state.tabs[Math.max(0, index - 1)] || state.tabs[0];
+    setActiveTab(fallback.id);
+  }
+
+  renderTabs();
+}
+
+function setActiveTab(tabId) {
+  state.activeTabId = tabId;
+  for (const tab of state.tabs) {
+    tab.webview.classList.toggle("is-active", tab.id === tabId);
+  }
+  syncWebviewElementSize(getActiveTab());
+  clearPreviewState();
+  const activeTab = getActiveTab();
+  elements.addressInput.value = activeTab ? activeTab.url : "";
+  renderTabs();
+  updateNavigationButtons();
+  scheduleTabRefresh(getActiveTab(), { delay: 0 });
+}
+
+function syncWebviewElementSize(tab = getActiveTab()) {
+  if (!tab?.webview?.isConnected) {
+    return;
+  }
+  const rect = elements.webviewStack.getBoundingClientRect();
+  const width = Math.max(320, Math.round(rect.width));
+  const height = Math.max(320, Math.round(rect.height));
+  tab.webview.style.width = `${width}px`;
+  tab.webview.style.height = `${height}px`;
+}
+
+function invalidateTabCaches(tab) {
+  if (!tab) {
+    return;
+  }
+  tab.lastItem = null;
+  tab.extractionToken = "";
+  tab.extractionPromise = null;
+  tab.decorationSignature = "";
+}
+
+function getDecorationSignature(tab, project) {
+  return JSON.stringify({
+    url: tab?.url || "",
+    projectPath: project?.path || "",
+    updatedAt: project?.updatedAt || "",
+    savedCount: project?.savedCount || 0,
+    ignoredCount: project?.ignoredCount || 0
+  });
+}
+
+function scheduleTabRefresh(tab = getActiveTab(), options = {}) {
+  if (!tab) {
+    return;
+  }
+  const {
+    delay = 120,
+    capture = true,
+    decorations = true
+  } = options;
+  if (tab.refreshTimer) {
+    clearTimeout(tab.refreshTimer);
+  }
+  tab.refreshTimer = setTimeout(async () => {
+    tab.refreshTimer = null;
+    if (tab.id !== state.activeTabId) {
+      return;
+    }
+    if (decorations) {
+      await applyProjectDecorations();
+    }
+    if (capture) {
+      await updateCaptureState();
+    }
+  }, delay);
+}
+
+function nudgeWebviewLayout(tab) {
+  if (!tab?.webview?.isConnected) {
+    return;
+  }
+  const script = `
+    (() => {
+      window.dispatchEvent(new Event("resize"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      const fallbackHeight = Math.max(window.innerHeight - 120, 480);
+      const layoutRoot = document.querySelector("#ui-layout-main");
+      if (layoutRoot && layoutRoot.getBoundingClientRect().height === 0) {
+        layoutRoot.style.minHeight = fallbackHeight + "px";
+      }
+      if (document.documentElement) {
+        document.documentElement.style.minHeight = Math.max(document.documentElement.clientHeight, fallbackHeight) + "px";
+      }
+      if (document.body) {
+        document.body.style.minHeight = Math.max(document.body.clientHeight, fallbackHeight) + "px";
+      }
+      return {
+        innerHeight: window.innerHeight,
+        layoutHeight: layoutRoot ? layoutRoot.getBoundingClientRect().height : null
+      };
+    })();
+  `;
+
+  for (const delay of [0, 250, 1000]) {
+    setTimeout(() => {
+      if (!tab.webview?.isConnected) {
+        return;
+      }
+      void tab.webview.executeJavaScript(script, true).catch(() => {});
+    }, delay);
+  }
+}
+
+function dismissPageObstructions(tab) {
+  if (!tab?.webview?.isConnected) {
+    return;
+  }
+  const script = `
+    (() => {
+      const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+      const buttonCandidates = [];
+      const overlayRoots = Array.from(
+        document.querySelectorAll('[role="dialog"], .modal, .dialog, .popup, [aria-modal="true"]')
+      );
+      const exactMatchers = [/don't show cultural advice/i, /dont show cultural advice/i, /^close$/i, /^dismiss$/i];
+      const fuzzyMatchers = [/close/i, /dismiss/i, /skip/i];
+      const collectButtons = (root) =>
+        Array.from(root.querySelectorAll('button, [role="button"], a')).filter((node) => {
+          const combined = [
+            node.textContent,
+            node.getAttribute("aria-label"),
+            node.getAttribute("title"),
+            node.className
+          ].join(" ");
+          return fuzzyMatchers.some((pattern) => pattern.test(combined));
+        });
+
+      for (const root of overlayRoots) {
+        buttonCandidates.push(...collectButtons(root));
+      }
+      if (!buttonCandidates.length) {
+        buttonCandidates.push(
+          ...Array.from(document.querySelectorAll('button, [role="button"], a')).filter((node) => {
+            const combined = [
+              node.textContent,
+              node.getAttribute("aria-label"),
+              node.getAttribute("title"),
+              node.className
+            ].join(" ");
+            return /don't show cultural advice|dont show cultural advice/i.test(combined);
+          })
+        );
+      }
+
+      const best =
+        buttonCandidates.find((node) => {
+          const value = normalize([
+            node.textContent,
+            node.getAttribute("aria-label"),
+            node.getAttribute("title")
+          ].join(" "));
+          return exactMatchers.some((pattern) => pattern.test(value));
+        }) ||
+        buttonCandidates[0];
+
+      if (best) {
+        best.click();
+        return true;
+      }
+      return false;
+    })();
+  `;
+
+  for (const delay of [250, 1000, 2500]) {
+    setTimeout(() => {
+      if (!tab.webview?.isConnected) {
+        return;
+      }
+      void tab.webview.executeJavaScript(script, true).catch(() => {});
+    }, delay);
+  }
+}
+
+function bindWebview(tab) {
+  tab.webview.addEventListener("console-message", (event) => {
+    try {
+      const inlinePrefix = "__trove_library_action__";
+      const browserPrefix = "__trove_library_browser_action__";
+      if (event.message.startsWith(inlinePrefix)) {
+        const payload = JSON.parse(event.message.slice(inlinePrefix.length));
+        void handleInlineAction(payload);
+        return;
+      }
+      if (event.message.startsWith(browserPrefix)) {
+        const payload = JSON.parse(event.message.slice(browserPrefix.length));
+        if (payload?.action === "open-tab" && payload.url) {
+          openTabFromPayload(payload);
+        }
+      }
+    } catch {
+      // Ignore malformed page messages.
+    }
+  });
+
+  tab.webview.addEventListener("dom-ready", async () => {
+    tab.didDomReady = true;
+    installBrowserPageLinkInterceptors(tab);
+    syncWebviewElementSize(tab);
+    nudgeWebviewLayout(tab);
+    dismissPageObstructions(tab);
+    scheduleTabRefresh(tab, { delay: 0 });
+  });
+
+  tab.webview.addEventListener("page-title-updated", (event) => {
+    tab.title = event.title || "Untitled";
+    renderTabs();
+  });
+
+  tab.webview.addEventListener("did-start-loading", () => {
+    updateNavigationButtons();
+    invalidateTabCaches(tab);
+    if (previewState.tabId === tab.id) {
+      clearPreviewState();
+    }
+    if (tab.id === state.activeTabId) {
+      elements.pageStatus.textContent = "Loading";
+      elements.pageKind.textContent = "Waiting for a supported collection page";
+      resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
+    }
+  });
+
+  const syncNavigation = async () => {
+    tab.url = tab.webview.getURL();
+    invalidateTabCaches(tab);
+    if (previewState.tabId === tab.id && previewState.pageUrl !== tab.url) {
+      clearPreviewState();
+    }
+    if (tab.id === state.activeTabId) {
+      elements.addressInput.value = tab.url;
+    }
+    renderTabs();
+    updateNavigationButtons();
+    syncWebviewElementSize(tab);
+    nudgeWebviewLayout(tab);
+    dismissPageObstructions(tab);
+    scheduleTabRefresh(tab, { delay: 90 });
+  };
+
+  tab.webview.addEventListener("did-stop-loading", syncNavigation);
+  tab.webview.addEventListener("did-navigate", syncNavigation);
+  tab.webview.addEventListener("did-navigate-in-page", syncNavigation);
+
+  tab.webview.addEventListener("new-window", (event) => {
+    event.preventDefault();
+    openTabFromPayload({
+      url: event.url,
+      activate: event.disposition === "foreground-tab" || event.disposition === "new-window"
+    });
+  });
+}
+
+function renderTabs() {
+  elements.tabs.hidden = state.tabs.length <= 1;
+  elements.tabs.innerHTML = "";
+  for (const tab of state.tabs) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tab";
+    button.classList.toggle("is-active", tab.id === state.activeTabId);
+
+    const label = document.createElement("span");
+    label.className = "tab-label";
+    label.textContent = tab.title || tab.url || "New tab";
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "tab-close";
+    closeButton.textContent = "×";
+    closeButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeTab(tab.id);
+    });
+
+    button.append(label, closeButton);
+    button.addEventListener("click", () => setActiveTab(tab.id));
+    elements.tabs.append(button);
+  }
+}
+
+function bindSidebarResizer() {
+  const minWidth = 280;
+  const maxWidth = 640;
+  const onPointerMove = (event) => {
+    const shellRect = document.querySelector(".app-shell")?.getBoundingClientRect();
+    if (!shellRect) {
+      return;
+    }
+    const nextWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(event.clientX - shellRect.left - 12)));
+    state.sidebarWidth = nextWidth;
+    applySidebarWidth();
+    syncWebviewElementSize();
+  };
+  const stopDrag = () => {
+    document.body.classList.remove("is-resizing-sidebar");
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopDrag);
+  };
+
+  elements.sidebarResizer.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    document.body.classList.add("is-resizing-sidebar");
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopDrag, { once: true });
+  });
+}
+
+function renderSources() {
+  elements.sourceList.innerHTML = "";
+  if (elements.pluginsSupported) {
+    elements.pluginsSupported.innerHTML = "";
+  }
+
+  for (const plugin of state.plugins) {
+    const article = document.createElement("article");
+    article.className = "source-card";
+
+    const heading = document.createElement("div");
+    heading.className = "source-card-head";
+    heading.innerHTML = `<strong>${plugin.label}</strong><span class="section-count">Built in</span>`;
+
+    const copy = document.createElement("p");
+    copy.className = "message-text";
+    copy.textContent = plugin.description;
+
+    const meta = document.createElement("p");
+    meta.className = "source-domains";
+    meta.textContent = plugin.domains.join(" · ");
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost-button source-open";
+    button.textContent = `Open ${plugin.label}`;
+    button.addEventListener("click", () => {
+      setMode("collect");
+      const activeTab = getActiveTab();
+      if (activeTab) {
+        activeTab.webview.loadURL(plugin.browseUrl);
+      } else {
+        createTab(plugin.browseUrl);
+      }
+    });
+
+    article.append(heading, copy, meta, button);
+    elements.sourceList.append(article);
+
+    if (elements.pluginsSupported) {
+      const pluginCard = document.createElement("article");
+      pluginCard.className = "plugin-source-card";
+      pluginCard.innerHTML = `
+        <div class="plugin-source-top">
+          <strong>${plugin.label}</strong>
+          <div class="plugin-capabilities">
+            <span class="source-badge">Images</span>
+            <span class="source-badge">Texts</span>
+          </div>
+        </div>
+        <p class="message-text">${plugin.description}</p>
+        <div class="plugin-source-meta">${plugin.domains.join(" · ")}</div>
+      `;
+      const browseButton = document.createElement("button");
+      browseButton.type = "button";
+      browseButton.className = "ghost-button";
+      browseButton.textContent = `Browse ${plugin.label}`;
+      browseButton.addEventListener("click", () => {
+        setMode("collect");
+        const activeTab = getActiveTab();
+        if (activeTab) {
+          activeTab.webview.loadURL(plugin.browseUrl);
+        } else {
+          createTab(plugin.browseUrl);
+        }
+      });
+      pluginCard.append(browseButton);
+      elements.pluginsSupported.append(pluginCard);
+    }
+  }
+}
+
+function renderProjects() {
+  const activeProject = getActiveProject();
+  elements.projectCount.textContent = String(state.projects.length);
+  elements.projectList.innerHTML = "";
+
+  if (!state.projects.length) {
+    elements.projectList.innerHTML = '<div class="empty-state">No `.trovelibrary` folders found yet.</div>';
+    return;
+  }
+
+  for (const project of state.projects) {
+    const fragment = elements.projectCardTemplate.content.cloneNode(true);
+    const button = fragment.querySelector(".project-card");
+    button.classList.toggle("is-active", activeProject?.path === project.path);
+    fragment.querySelector(".project-name").textContent = project.name;
+    fragment.querySelector(".project-meta").textContent =
+      `${project.counts.texts || project.counts.newspapers} texts · ${project.counts.images} images · ${project.ignoredCount} ignored`;
+    button.addEventListener("click", async () => {
+      state.activeProjectPath = project.path;
+      renderProjects();
+      renderProjectDetails();
+      renderRecentSaves();
+      renderProjectsWorkspace();
+      renderManageList();
+      await applyProjectDecorations();
+      await updateCaptureState();
+    });
+    elements.projectList.append(fragment);
+  }
+}
+
+function renderProjectsWorkspace() {
+  const project = getActiveProject();
+  if (!elements.projectsFocus || !elements.projectsWorkflow || !elements.projectsActivity) {
+    return;
+  }
+
+  if (!project) {
+    elements.projectsFocus.className = "projects-focus empty-state";
+    elements.projectsFocus.textContent = "Select a library to see its working summary.";
+    elements.projectsWorkflow.innerHTML = `
+      <div class="workflow-step"><strong>1. Create</strong><span>Create a library in the sidebar.</span></div>
+      <div class="workflow-step"><strong>2. Collect</strong><span>Browse live sources and collect text and image records.</span></div>
+      <div class="workflow-step"><strong>3. Manage</strong><span>Review the project inventory and only reveal files when needed.</span></div>
+    `;
+    elements.projectsActivity.className = "projects-activity empty-state";
+    elements.projectsActivity.textContent = "Collected and ignored records will appear here.";
+    return;
+  }
+
+  elements.projectsFocus.className = "projects-focus";
+  const sourceBadges = Object.entries(project.sourceCounts || {})
+    .map(([source, count]) => `<span class="source-badge">${source.toUpperCase()} ${count}</span>`)
+    .join("");
+  elements.projectsFocus.innerHTML = `
+    <div class="projects-focus-head">
+      <div>
+        <strong>${project.name}</strong>
+        <div class="message-text">${project.folderName}</div>
+        <div class="message-text">${summarizeProjectRecordMix(project)}</div>
+      </div>
+      <div class="project-stats">
+        <div class="project-stat"><span>Texts</span><strong>${project.counts.texts || project.counts.newspapers || 0}</strong></div>
+        <div class="project-stat"><span>Images</span><strong>${project.counts.images || 0}</strong></div>
+        <div class="project-stat"><span>Ignored</span><strong>${project.ignoredCount || 0}</strong></div>
+        <div class="project-stat"><span>Uncollected</span><strong>${project.uncollectedCount || 0}</strong></div>
+      </div>
+    </div>
+    <div class="source-badges">${sourceBadges || '<span class="message-text">No sources saved yet.</span>'}</div>
+    <div class="projects-focus-actions">
+      <button type="button" class="primary-action projects-open-collect">Open Collect</button>
+      <button type="button" class="ghost-button projects-open-manage">Open Manage</button>
+      <button type="button" class="ghost-button projects-open-folder">Open Folder</button>
+      <button type="button" class="ghost-button projects-open-csv">Open Native CSV</button>
+    </div>
+  `;
+  elements.projectsFocus.querySelector(".projects-open-collect")?.addEventListener("click", () => setMode("collect"));
+  elements.projectsFocus.querySelector(".projects-open-manage")?.addEventListener("click", () => {
+    setMode("manage");
+    renderManageList();
+  });
+  elements.projectsFocus.querySelector(".projects-open-folder")?.addEventListener("click", () => {
+    void window.troveApi.openPath(project.path);
+  });
+  elements.projectsFocus.querySelector(".projects-open-csv")?.addEventListener("click", () => {
+    void window.troveApi.openPath(`${project.path}/items.csv`);
+  });
+
+  elements.projectsWorkflow.innerHTML = `
+    <div class="workflow-step"><strong>Collect</strong><span>Stay in the browser, preview the record, then collect or ignore it.</span></div>
+    <div class="workflow-step"><strong>Text And Image</strong><span>Articles and images are tracked together in one library and one CSV.</span></div>
+    <div class="workflow-step"><strong>Reveal Files Only When Needed</strong><span>Use in-app browsing first. Reveal markdown, sidecars, or binaries only when you need the raw files.</span></div>
+  `;
+
+  const activityItems = getProjectInventory(project).slice(0, 6);
+  if (!activityItems.length) {
+    elements.projectsActivity.className = "projects-activity empty-state";
+    elements.projectsActivity.textContent = "No project activity yet.";
+    return;
+  }
+  elements.projectsActivity.className = "projects-activity";
+  elements.projectsActivity.innerHTML = "";
+  for (const item of activityItems) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "projects-activity-item";
+    row.innerHTML = `
+      <span class="projects-activity-status ${item.status === "ignored" ? "is-ignored" : "is-saved"}">${item.status === "ignored" ? "Ignored" : formatItemTypeBadge(item.type)}</span>
+      <span class="projects-activity-title">${item.title}</span>
+      <span class="projects-activity-meta">${(item.sourceLabel || item.source || "Source").toUpperCase()} · ${formatDate(item.timestamp)}</span>
+    `;
+    row.addEventListener("click", () => {
+      void openItemInApp(item);
+    });
+    elements.projectsActivity.append(row);
+  }
+}
+
+function renderProjectDetails() {
+  const project = getActiveProject();
+  elements.openProjectFolder.disabled = !project;
+
+  if (!project) {
+    elements.projectDetails.className = "project-details empty-state";
+    elements.projectDetails.textContent = "Create or select a project to start filing articles and images.";
+    return;
+  }
+
+  if (state.mode === "collect") {
+    elements.projectDetails.className = "project-details project-details-compact";
+    elements.projectDetails.innerHTML = `
+      <div>
+        <strong>${project.name}</strong>
+        <div class="message-text">${project.folderName}</div>
+      </div>
+    `;
+    return;
+  }
+
+  const sourceBadges = Object.entries(project.sourceCounts || {})
+    .map(([source, count]) => `<span class="source-badge">${source.toUpperCase()} ${count}</span>`)
+    .join("");
+
+  elements.projectDetails.className = "project-details";
+  elements.projectDetails.innerHTML = `
+    <div>
+      <strong>${project.name}</strong>
+      <div class="message-text">${project.folderName}</div>
+    </div>
+    <div class="project-stats">
+      <div class="project-stat"><span>Texts</span><strong>${project.counts.texts || project.counts.newspapers}</strong></div>
+      <div class="project-stat"><span>Images</span><strong>${project.counts.images}</strong></div>
+      <div class="project-stat"><span>Uncollected</span><strong>${project.uncollectedCount || 0}</strong></div>
+    </div>
+    <div class="message-text">${summarizeProjectRecordMix(project)}</div>
+    <div class="source-badges">${sourceBadges || '<span class="message-text">No sources saved yet.</span>'}</div>
+    <div class="message-text">Updated ${formatDate(project.updatedAt)}</div>
+  `;
+}
+
+function renderRecentSaves() {
+  const project = getActiveProject();
+  elements.recentSaves.innerHTML = "";
+
+  if (!project || !project.recentSaved.length) {
+    elements.recentSaves.className = "recent-saves empty-state";
+    elements.recentSaves.textContent = "No saved items yet.";
+    return;
+  }
+
+  elements.recentSaves.className = "recent-saves";
+  for (const item of project.recentSaved) {
+    const fragment = elements.recentItemTemplate.content.cloneNode(true);
+    const localTargets = resolveItemLocalTargets(project, item);
+    fragment.querySelector(".recent-type").textContent = formatItemTypeBadge(item.type);
+    fragment.querySelector(".recent-source").textContent = (item.sourceLabel || item.source || "Source").toUpperCase();
+    fragment.querySelector(".recent-title").textContent = item.title;
+    fragment.querySelector(".recent-meta").textContent =
+      `${formatDate(item.savedAt)} · ${summarizeNativeRecord(item)}`;
+    fragment.querySelector(".recent-open-app").addEventListener("click", () => {
+      void openItemInApp(item);
+    });
+    const openFileButton = fragment.querySelector(".recent-open-file");
+    openFileButton.disabled = !localTargets.length;
+    openFileButton.addEventListener("click", async () => {
+      if (!localTargets.length) {
+        return;
+      }
+      await window.troveApi.openPath(localTargets[0]);
+    });
+    elements.recentSaves.append(fragment);
+  }
+}
+
+function getProjectInventory(project) {
+  if (!project) {
+    return [];
+  }
+
+  const saved = (project.saved || []).map((item) => ({ ...item, status: "saved", timestamp: item.savedAt || "" }));
+  const ignored = (project.ignored || []).map((item) => ({ ...item, status: "ignored", timestamp: item.ignoredAt || "" }));
+  const uncollected = (project.uncollected || []).map((item) => ({
+    ...item,
+    status: "uncollected",
+    timestamp: item.uncollectedAt || ""
+  }));
+  return [...saved, ...ignored, ...uncollected].sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)));
+}
+
+async function renderManageList() {
+  const project = getActiveProject();
+  const renderToken = ++state.manageRenderToken;
+  elements.openItemsCsv.disabled = !project;
+
+  if (!project) {
+    elements.manageSummary.textContent = "0 items";
+    elements.manageList.className = "manage-list empty-state";
+    elements.manageList.textContent = "Select a project to manage its collected items.";
+    return;
+  }
+
+  const inventory = getProjectInventory(project).filter((item) => {
+    if (state.manageFilter === "all") {
+      return true;
+    }
+    return item.status === state.manageFilter;
+  }).filter((item) => {
+    const query = state.manageQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    const haystack = [
+      item.title,
+      item.url,
+      item.sourceLabel,
+      item.source,
+      item.type,
+      summarizeNativeRecord(item)
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(query);
+  });
+
+  elements.filterAll.classList.toggle("is-active", state.manageFilter === "all");
+  elements.filterSaved.classList.toggle("is-active", state.manageFilter === "saved");
+  elements.filterIgnored.classList.toggle("is-active", state.manageFilter === "ignored");
+  elements.filterUncollected.classList.toggle("is-active", state.manageFilter === "uncollected");
+  if (elements.manageSearch && elements.manageSearch.value !== state.manageQuery) {
+    elements.manageSearch.value = state.manageQuery;
+  }
+  elements.manageSummary.textContent = `${inventory.length} item${inventory.length === 1 ? "" : "s"}`;
+  elements.manageList.innerHTML = "";
+
+  if (!inventory.length) {
+    elements.manageList.className = "manage-list empty-state";
+    elements.manageList.textContent = "No items in this filter yet.";
+    return;
+  }
+
+  elements.manageList.className = "manage-list";
+  for (const item of inventory) {
+    const fragment = elements.manageItemTemplate.content.cloneNode(true);
+    const card = fragment.querySelector(".manage-item");
+    const localTargets = resolveItemLocalTargets(project, item);
+    const statusNode = fragment.querySelector(".manage-item-status");
+    statusNode.textContent =
+      item.status === "saved" ? "Collected" : item.status === "ignored" ? "Ignored" : "Uncollected";
+    statusNode.classList.toggle("ignored", item.status === "ignored");
+    statusNode.classList.toggle("uncollected", item.status === "uncollected");
+    fragment.querySelector(".manage-item-type").textContent = formatItemTypeBadge(item.type);
+    fragment.querySelector(".manage-item-source").textContent = (item.sourceLabel || item.source || "Source").toUpperCase();
+    fragment.querySelector(".manage-item-title").textContent = item.title;
+    fragment.querySelector(".manage-item-meta").textContent = `${formatDate(item.timestamp)} · ${summarizeNativeRecord(item)} · ${item.url}`;
+    fragment.querySelector(".manage-open-page").addEventListener("click", () => {
+      void openItemInApp(item);
+    });
+    const openFile = fragment.querySelector(".manage-open-file");
+    openFile.disabled = !localTargets.length;
+    openFile.addEventListener("click", async () => {
+      if (!localTargets.length) {
+        return;
+      }
+      await window.troveApi.openPath(localTargets[0]);
+    });
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button")) {
+        return;
+      }
+      void openItemInApp(item);
+    });
+    elements.manageList.append(fragment);
+    void populateManageCard(card, project, item, renderToken);
+  }
+}
+
+function updateNavigationButtons() {
+  const activeTab = getActiveTab();
+  if (!activeTab) {
+    elements.backButton.disabled = true;
+    elements.forwardButton.disabled = true;
+    elements.reloadButton.disabled = true;
+    return;
+  }
+
+  elements.backButton.disabled = !safeCanGo(activeTab, "back");
+  elements.forwardButton.disabled = !safeCanGo(activeTab, "forward");
+  elements.reloadButton.disabled = !activeTab.webview?.isConnected;
+}
+
+async function applyProjectDecorations() {
+  const activeTab = getActiveTab();
+  if (!isWebviewReady(activeTab)) {
+    return;
+  }
+
+  try {
+    const project = getActiveProject();
+    const signature = getDecorationSignature(activeTab, project);
+    if (activeTab.decorationSignature === signature) {
+      return;
+    }
+    const payload = sourceRegistry.projectStatePayload(project);
+    await activeTab.webview.executeJavaScript(sourceRegistry.buildDecorationScript(payload), true);
+    activeTab.decorationSignature = signature;
+  } catch {
+    // Ignore pages that reject script execution during navigation.
+  }
+}
+
+async function extractItemFromWebview(webview, cacheTarget = null) {
+  if (!webview?.isConnected) {
+    return { supported: false, reason: "Wait for the page to attach and load." };
+  }
+
+  if (cacheTarget?.extractionPromise) {
+    return cacheTarget.extractionPromise;
+  }
+
+  let extractionPromise = null;
+  extractionPromise = (async () => {
+    const token = crypto.randomUUID();
+    if (cacheTarget) {
+      cacheTarget.extractionToken = token;
+    }
+
+    const startedAt = Date.now();
+    const timeoutMs = 10000;
+    let lastUnsupported = { supported: false, reason: "Waiting for the collection page to finish loading." };
+    let lastSupported = null;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        const result = await webview.executeJavaScript(sourceRegistry.buildExtractionScript(), true);
+        if (result?.supported) {
+          lastSupported = result;
+          if (!isStableExtractedItem(result)) {
+            lastUnsupported = {
+              supported: false,
+              reason: "Waiting for the record details to finish loading."
+            };
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            continue;
+          }
+          if (cacheTarget && cacheTarget.extractionToken === token) {
+            cacheTarget.lastItem = {
+              url: cacheTarget.url,
+              result
+            };
+          }
+          return result;
+        }
+        lastUnsupported = result || lastUnsupported;
+      } catch {
+        lastUnsupported = { supported: false, reason: "This page is still loading." };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+
+    return lastSupported || lastUnsupported;
+  })();
+
+  if (cacheTarget) {
+    cacheTarget.extractionPromise = extractionPromise;
+  }
+
+  try {
+    return await extractionPromise;
+  } finally {
+    if (cacheTarget?.extractionPromise === extractionPromise) {
+      cacheTarget.extractionPromise = null;
+    }
+  }
+}
+
+async function extractCurrentItem() {
+  const activeTab = getActiveTab();
+  if (!isWebviewReady(activeTab)) {
+    return { supported: false, reason: "Wait for the page to finish loading." };
+  }
+
+  if (activeTab.lastItem && activeTab.lastItem.url === activeTab.url) {
+    return activeTab.lastItem.result;
+  }
+
+  const extracted = await extractItemFromWebview(activeTab.webview, activeTab);
+  if (
+    !extracted?.supported &&
+    /https?:\/\/purl\.slwa\.wa\.gov\.au\/download\/slwa_[a-z0-9_]+\.(jpg|jpeg|png|tif|tiff|webp)(\?[^#]*)?$/i.test(activeTab.url || "")
+  ) {
+    return fetchItemByUrl(activeTab.url, { force: true });
+  }
+  return extracted;
+}
+
+async function fetchItemByUrl(url, options = {}) {
+  const mode = options.mode || "full";
+  const cacheKey = `${ensureUrl(url)}::${mode}`;
+  if (!options.force && backgroundFetchCache.has(cacheKey)) {
+    return backgroundFetchCache.get(cacheKey);
+  }
+
+  const pending = window.troveApi.fetchItemByUrl(ensureUrl(url), options);
+  backgroundFetchCache.set(cacheKey, pending);
+
+  try {
+    return await pending;
+  } finally {
+    if (backgroundFetchCache.get(cacheKey) === pending) {
+      backgroundFetchCache.delete(cacheKey);
+    }
+  }
+}
+
+async function resolveSlwaBridgeUrlFromWebview(webview) {
+  if (!webview?.isConnected) {
+    return "";
+  }
+
+  const script = `
+    (() => {
+      const dismissModal = () => {
+        const modal = document.querySelector("#culturalModal");
+        if (!modal) {
+          return;
+        }
+        const closeButton =
+          modal.querySelector("button.close, .close, [data-dismiss='modal'], .btn-primary, button, a");
+        closeButton?.click?.();
+      };
+      dismissModal();
+      const locateButton = document.querySelector("button.work-actions-borrow");
+      locateButton?.click?.();
+      const holdingLink = Array.from(document.querySelectorAll("a[href]")).find((anchor) =>
+        /purl\\.slwa\\.wa\\.gov\\.au|catalogue\\.slwa\\.wa\\.gov\\.au/i.test(anchor.href)
+      );
+      return holdingLink?.href || "";
+    })();
+  `;
+
+  return webview.executeJavaScript(script, true).catch(() => "");
+}
+
+async function maybeBridgeCurrentPageItem(item, activeTab) {
+  if (
+    !item?.supported ||
+    item.source !== "trove" ||
+    !/state library of wa|state library of western australia/i.test(item.contributor || "")
+  ) {
+    return item;
+  }
+
+  const bridgeUrl = await resolveSlwaBridgeUrlFromWebview(activeTab?.webview);
+  if (!bridgeUrl) {
+    return item;
+  }
+
+  const bridged = await fetchItemByUrl(bridgeUrl, { force: true, mode: "preview" });
+  if (!bridged?.supported) {
+    return item;
+  }
+
+  bridged.aliases = [...new Set([...(bridged.aliases || []), item.url, ...(item.aliases || []), bridgeUrl])];
+  bridged.bridgedFrom = {
+    source: item.source,
+    url: item.url
+  };
+  return bridged;
+}
+
+async function maybeHydrateSlwaCurrentPageItem(item) {
+  if (!item?.supported || item.source !== "slwa") {
+    return item;
+  }
+  const attachments = getItemAttachments(item);
+  const needsHydration =
+    Boolean(item.viewAllUrl) ||
+    (Array.isArray(item.viewerUrls) && item.viewerUrls.length > 1) ||
+    /encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i.test(item.url || "") ||
+    attachments.some((entry) => entry.imageUrl && !/\/download\/.+\.(jpg|jpeg|png|tif|tiff|webp)$/i.test(entry.imageUrl));
+  if (!needsHydration) {
+    return item;
+  }
+  const hydrated = await fetchItemByUrl(item.viewAllUrl || item.url, { force: true, mode: "preview" });
+  if (!hydrated?.supported) {
+    return item;
+  }
+  hydrated.aliases = [...new Set([...(hydrated.aliases || []), item.url, ...(item.aliases || [])])];
+  return hydrated;
+}
+
+async function showCaptureItem(item, origin = "page", context = getCaptureContext()) {
+  const markdown = await window.troveApi.previewMarkdown(item);
+  setPreviewState(item, markdown, origin, context);
+  renderCapturePane(item, markdown, { origin });
+}
+
+async function previewItemFromUrl(url) {
+  const context = getCaptureContext();
+  setMessage("Loading linked item preview…");
+  resetCapturePane("Loading the linked record into the capture pane.", "Loading");
+  const item = await fetchItemByUrl(url, { mode: "preview" });
+  if (!item?.supported) {
+    clearPreviewState();
+    resetCapturePane(item?.reason || "Could not build a preview for that link.");
+    setMessage(item?.reason || "Could not build a preview for that link.");
+    return;
+  }
+  await showCaptureItem(item, "link", context);
+  setMessage(`Previewing ${item.title}.`);
+}
+
+async function collectItem(item) {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before collecting.");
+    return;
+  }
+  const savableItem = await ensureCollectableItem(item);
+  await window.troveApi.saveItem(project.path, savableItem);
+  if (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url) {
+    previewState.item = savableItem;
+    renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
+      origin: previewState.origin,
+      forcedStatus: "saved"
+    });
+  }
+  await applyImmediatePageFeedback(savableItem, "saved");
+  setMessage(`Collected ${savableItem.title}.`);
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    activeTab.lastItem = null;
+  }
+  await refreshProjects(project.path);
+}
+
+async function uncollectItem(item) {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before removing collected items.");
+    return;
+  }
+  const confirmed = window.confirm(`Delete this collected record from the library?\n\n${item.title}`);
+  if (!confirmed) {
+    return;
+  }
+  await window.troveApi.uncollectItem(project.path, item);
+  if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+    renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
+      origin: previewState.origin,
+      forcedStatus: ""
+    });
+  }
+  await applyImmediatePageFeedback(item, "");
+  setMessage(`Removed ${item.title} from the library.`);
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    activeTab.lastItem = null;
+  }
+  await refreshProjects(project.path);
+}
+
+async function unignoreItem(item) {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before changing ignored items.");
+    return;
+  }
+  await window.troveApi.unignoreItem(project.path, item);
+  if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+    renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
+      origin: previewState.origin,
+      forcedStatus: ""
+    });
+  }
+  await applyImmediatePageFeedback(item, "");
+  setMessage(`Unignored ${item.title}.`);
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    activeTab.lastItem = null;
+  }
+  await refreshProjects(project.path);
+}
+
+async function ensureCollectableItem(item) {
+  if (!item?.supported || item.source !== "slwa" || item.type !== "image") {
+    return item;
+  }
+  const attachments = getItemAttachments(item);
+  const needsFullFetch =
+    attachments.length > 1 ||
+    Boolean(item.viewAllUrl) ||
+    attachments.some((entry) => !hasFullResolutionImage(entry));
+  if (!needsFullFetch) {
+    return item;
+  }
+  const fullItem = await fetchItemByUrl(item.viewAllUrl || item.url, { force: true, mode: "full" });
+  return fullItem?.supported ? fullItem : item;
+}
+
+async function hydratePreviewAttachmentAtIndex(index) {
+  const item = getDisplayedItem();
+  if (!item?.supported || item.source !== "slwa" || item.type !== "image") {
+    return;
+  }
+  const attachments = getItemAttachments(item);
+  const target = attachments[index];
+  if (!target?.viewerUrl || hasFullResolutionImage(target)) {
+    return;
+  }
+  const hydratedItem = await fetchItemByUrl(target.viewerUrl, { force: true, mode: "single" });
+  const hydratedAttachment = getItemAttachments(hydratedItem)[0];
+  if (!hydratedAttachment?.imageUrl) {
+    return;
+  }
+  const nextAttachments = attachments.map((entry, entryIndex) =>
+    entryIndex === index
+      ? {
+          ...entry,
+          ...hydratedAttachment,
+          thumbnailUrl: entry.thumbnailUrl || hydratedAttachment.thumbnailUrl || hydratedAttachment.imageUrl
+        }
+      : entry
+  );
+  previewState.item = {
+    ...item,
+    attachments: nextAttachments,
+    imageUrl: index === 0 ? hydratedAttachment.imageUrl : item.imageUrl,
+    imageUrls: nextAttachments.map((entry) => entry.imageUrl || entry.thumbnailUrl).filter(Boolean),
+    viewerUrls: nextAttachments.map((entry) => entry.viewerUrl).filter(Boolean)
+  };
+}
+
+async function collectItemFromUrl(url) {
+  setMessage("Loading item to collect…");
+  const item = await fetchItemByUrl(url);
+  if (!item?.supported) {
+    setMessage(item?.reason || "Could not collect that link.");
+    return;
+  }
+  await collectItem(item);
+}
+
+async function handleInlineAction(payload) {
+  if (!payload?.action || !payload?.url) {
+    return;
+  }
+  if (payload.action === "preview-link") {
+    await previewItemFromUrl(payload.url);
+    return;
+  }
+  if (payload.action === "collect-link") {
+    await collectItemFromUrl(payload.url);
+  }
+}
+
+function setDebugOutput(text) {
+  elements.debugOutput.textContent = text;
+}
+
+async function getCurrentPageHtml() {
+  const activeTab = getActiveTab();
+  if (!isWebviewReady(activeTab)) {
+    throw new Error("Wait for the page to finish loading before dumping HTML.");
+  }
+  return activeTab.webview.executeJavaScript("document.documentElement.outerHTML", true);
+}
+
+async function saveDebugCapture(kind) {
+  const project = getActiveProject();
+  const activeTab = getActiveTab();
+  if (!activeTab) {
+    setMessage("Open a page before saving debug artifacts.");
+    return;
+  }
+
+  const capture = {
+    title: activeTab.title,
+    url: activeTab.url,
+    notes: `Captured from ${activeTab.url}`
+  };
+
+  if (kind === "page") {
+    capture.pageHtml = await getCurrentPageHtml();
+    try {
+      const item = await extractCurrentItem();
+      if (item?.supported) {
+        capture.itemJson = item;
+      }
+    } catch {
+      // Keep the HTML dump even if structured extraction fails.
+    }
+  }
+
+  if (kind === "item" || kind === "preview") {
+    const item = getDisplayedItem() || (await extractCurrentItem());
+    if (!item?.supported) {
+      setMessage(item?.reason || "No supported item on this page yet.");
+      return;
+    }
+    capture.title = item.title;
+    capture.itemJson = item;
+    if (kind === "preview") {
+      capture.previewMarkdown = getDisplayedMarkdown() || (await window.troveApi.previewMarkdown(item));
+    }
+  }
+
+  const written = await window.troveApi.saveDebugCapture(project?.path || "", capture);
+  setDebugOutput(`Saved debug capture:\n${Object.entries(written).map(([name, file]) => `${name}: ${file}`).join("\n")}`);
+  setMessage(`Saved debug ${kind} artifact${kind === "page" ? "s" : ""}.`);
+}
+
+async function runDebugCommand(command) {
+  const trimmed = String(command || "").trim();
+  if (!trimmed) {
+    return;
+  }
+  setDebugOutput(`$ ${trimmed}\n`);
+  const result = await window.troveApi.runDebugCommand(trimmed, getDebugCwd());
+  setDebugOutput(
+    [`$ ${trimmed}`, result.stdout?.trim() || "", result.stderr?.trim() || "", result.success ? "" : "[exit: failed]"]
+      .filter(Boolean)
+      .join("\n\n")
+  );
+}
+
+async function updateCaptureState() {
+  const project = getActiveProject();
+  const activeTab = getActiveTab();
+  const requestId = ++state.captureRequestId;
+  elements.captureCollect.disabled = !project || !getDisplayedItem();
+  elements.captureIgnore.disabled = !project || !getDisplayedItem();
+  elements.captureOpenPage.disabled = !getDisplayedItem()?.url;
+
+  if (!activeTab) {
+    clearPreviewState();
+    elements.pageStatus.textContent = "Ready";
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = "Open a supported collection page.";
+    resetCapturePane("Open a page to start browsing. Supported record pages will render their capture preview here.");
+    return;
+  }
+
+  if (!hasInlinePreviewForActiveTab()) {
+    resetCapturePane("Reading the current page and preparing its capture preview.", "Loading");
+  }
+
+  let item = await extractCurrentItem();
+  if (requestId !== state.captureRequestId) {
+    return;
+  }
+
+  if (!item?.supported) {
+    elements.pageStatus.textContent = activeTab.title || "Page";
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = "Browse normally or preview a supported link from the page.";
+    if (hasInlinePreviewForActiveTab() && previewState.item) {
+      renderCapturePane(previewState.item, previewState.markdown, { origin: previewState.origin });
+    } else {
+      clearPreviewState();
+      resetCapturePane(item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record.");
+    }
+    if (!project) {
+      setMessage("Create or select a project first.");
+    } else if (item?.reason) {
+      setMessage(item.reason);
+    }
+    return;
+  }
+
+  item = await maybeBridgeCurrentPageItem(item, activeTab);
+  if (requestId !== state.captureRequestId) {
+    return;
+  }
+  item = await maybeHydrateSlwaCurrentPageItem(item);
+  if (requestId !== state.captureRequestId) {
+    return;
+  }
+
+  await showCaptureItem(item, "page", getCaptureContext());
+  if (requestId !== state.captureRequestId) {
+    return;
+  }
+
+  const status = sourceRegistry.itemStatus(project, item);
+  elements.pageStatus.textContent = item.title;
+  elements.pageKind.className = "page-kind";
+  elements.pageKind.textContent = `${item.sourceLabel} · ${formatItemType(item.type)}`;
+  if (status === "saved") {
+    elements.pageKind.classList.add("item-state-saved");
+    elements.pageKind.textContent += " · already saved";
+  } else if (status === "ignored") {
+    elements.pageKind.classList.add("item-state-ignored");
+    elements.pageKind.textContent += " · ignored";
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const previewImageTarget =
+    event.target instanceof Element ? event.target.closest("[data-preview-image-index]") : null;
+  if (previewImageTarget && getDisplayedItem()) {
+    event.preventDefault();
+    const nextIndex = Number.parseInt(previewImageTarget.getAttribute("data-preview-image-index") || "0", 10) || 0;
+    previewState.imageIndex = nextIndex;
+    renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
+    void hydratePreviewAttachmentAtIndex(nextIndex).then(() => {
+      if (getDisplayedItem()) {
+        renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
+      }
+    });
+    return;
+  }
+  const target = event.target instanceof Element ? event.target.closest("[data-open-external]") : null;
+  if (!target) {
+    return;
+  }
+  event.preventDefault();
+  const url = target.getAttribute("data-open-external");
+  if (url) {
+    void window.troveApi.openExternal(url);
+  }
+});
+
+async function refreshProjects(preferredPath = state.activeProjectPath) {
+  state.projects = await window.troveApi.listProjects();
+  if (!state.projects.length) {
+    state.activeProjectPath = "";
+  } else if (!state.projects.some((project) => project.path === preferredPath)) {
+    state.activeProjectPath = state.projects[0].path;
+  } else {
+    state.activeProjectPath = preferredPath;
+  }
+
+  renderProjects();
+  renderProjectDetails();
+  renderRecentSaves();
+  renderManageList();
+  renderProjectsWorkspace();
+  renderDebugCwd();
+  await applyProjectDecorations();
+  await updateCaptureState();
+}
+
+async function chooseProjectLocation() {
+  const selected = await window.troveApi.chooseProjectDirectory();
+  if (!selected) {
+    return;
+  }
+  state.selectedProjectDirectory = selected;
+  renderProjectLocation();
+  setMessage(`New libraries will be created in ${selected}.`);
+}
+
+elements.projectForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = elements.projectNameInput.value.trim();
+  if (!name) {
+    setMessage("Enter a project name first.");
+    return;
+  }
+
+  try {
+    const project = await window.troveApi.createProject(state.selectedProjectDirectory, name);
+    elements.projectNameInput.value = "";
+    setMessage(`Created ${project.folderName}.`);
+    setMode("collect");
+    await refreshProjects(project.path);
+  } catch (error) {
+    setMessage(error.message || "Could not create project.");
+  }
+});
+
+elements.chooseProjectLocation.addEventListener("click", () => {
+  void chooseProjectLocation();
+});
+elements.modeCollect.addEventListener("click", () => setMode("collect"));
+elements.modeManage.addEventListener("click", () => {
+  setMode("manage");
+  renderManageList();
+});
+elements.modeProjects.addEventListener("click", () => setMode("projects"));
+elements.modePlugins.addEventListener("click", () => setMode("plugins"));
+elements.filterAll.addEventListener("click", () => {
+  state.manageFilter = "all";
+  renderManageList();
+});
+elements.filterSaved.addEventListener("click", () => {
+  state.manageFilter = "saved";
+  renderManageList();
+});
+elements.filterIgnored.addEventListener("click", () => {
+  state.manageFilter = "ignored";
+  renderManageList();
+});
+elements.filterUncollected.addEventListener("click", () => {
+  state.manageFilter = "uncollected";
+  renderManageList();
+});
+elements.manageSearch?.addEventListener("input", (event) => {
+  state.manageQuery = event.target.value || "";
+  renderManageList();
+});
+elements.openItemsCsv.addEventListener("click", async () => {
+  const project = getActiveProject();
+  if (!project) {
+    return;
+  }
+  await window.troveApi.openPath(`${project.path}/items.csv`);
+});
+
+elements.openProjectFolder.addEventListener("click", async () => {
+  const project = getActiveProject();
+  if (!project) {
+    return;
+  }
+  await window.troveApi.openPath(project.path);
+});
+
+elements.pluginSeedUrls.addEventListener("input", () => {
+  renderPluginIntake();
+});
+
+elements.pluginCopyPrompt.addEventListener("click", async () => {
+  await window.troveApi.copyText(elements.pluginPromptOutput.textContent || "");
+  setMessage("Copied new-source integration prompt.");
+});
+
+elements.pluginCopyProbeCommand.addEventListener("click", async () => {
+  await window.troveApi.copyText(buildPluginProbeCommand(getPluginSeedUrls()));
+  setMessage("Copied source probe command.");
+});
+
+elements.addressForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const activeTab = getActiveTab();
+  if (!activeTab) {
+    return;
+  }
+  const nextUrl = ensureUrl(elements.addressInput.value);
+  activeTab.webview.loadURL(nextUrl);
+});
+
+elements.backButton.addEventListener("click", () => getActiveTab()?.webview.goBack());
+elements.forwardButton.addEventListener("click", () => getActiveTab()?.webview.goForward());
+elements.reloadButton.addEventListener("click", () => getActiveTab()?.webview.reload());
+elements.newTabButton.addEventListener("click", () => createTab());
+elements.debugToggle.addEventListener("click", () => toggleDebugDrawer());
+elements.debugClose.addEventListener("click", () => toggleDebugDrawer(false));
+elements.debugSavePage.addEventListener("click", () => {
+  void saveDebugCapture("page");
+});
+elements.debugSaveItem.addEventListener("click", () => {
+  void saveDebugCapture("item");
+});
+elements.debugSavePreview.addEventListener("click", () => {
+  void saveDebugCapture("preview");
+});
+elements.debugForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void runDebugCommand(elements.debugCommand.value);
+});
+elements.captureOpenPage.addEventListener("click", () => {
+  const item = getDisplayedItem();
+  if (!item?.url) {
+    return;
+  }
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    activeTab.webview.loadURL(item.url);
+  } else {
+    createTab(item.url);
+  }
+});
+
+elements.captureCollect.addEventListener("click", async () => {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before collecting.");
+    return;
+  }
+
+  const item = getDisplayedItem() || (await extractCurrentItem());
+  if (!item?.supported && !getDisplayedItem()) {
+    setMessage(item?.reason || "This item cannot be collected.");
+    return;
+  }
+
+  try {
+    const targetItem = getDisplayedItem() || item;
+    const status = sourceRegistry.itemStatus(project, targetItem);
+    if (status === "saved") {
+      await uncollectItem(targetItem);
+      return;
+    }
+    await collectItem(targetItem);
+  } catch (error) {
+    setMessage(error.message || "Collect failed.");
+  }
+});
+
+elements.captureIgnore.addEventListener("click", async () => {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before ignoring items.");
+    return;
+  }
+
+  const extracted = await extractCurrentItem();
+  const item = getDisplayedItem() || extracted;
+  if (!item?.supported && !getDisplayedItem()) {
+    setMessage(extracted?.reason || "This item cannot be ignored.");
+    return;
+  }
+
+  try {
+    const status = sourceRegistry.itemStatus(project, item);
+    if (status === "ignored") {
+      await unignoreItem(item);
+      return;
+    }
+    await window.troveApi.ignoreItem(project.path, item);
+    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+      renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
+        origin: previewState.origin,
+        forcedStatus: "ignored"
+      });
+    }
+    await applyImmediatePageFeedback(item, "ignored");
+    setMessage(`Ignored ${item.title}.`);
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      activeTab.lastItem = null;
+    }
+    await refreshProjects(project.path);
+  } catch (error) {
+    setMessage(error.message || "Ignore failed.");
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") {
+    return;
+  }
+  if (!elements.debugDrawer.hidden) {
+    toggleDebugDrawer(false);
+  }
+});
+
+window.addEventListener("DOMContentLoaded", async () => {
+  applySidebarWidth();
+  renderProjectLocation();
+  renderMode();
+  renderManageList();
+  renderDebugCwd();
+  renderSources();
+  renderPluginIntake();
+  bindSidebarResizer();
+  webviewResizeObserver = new ResizeObserver(() => {
+    syncWebviewElementSize();
+    nudgeWebviewLayout(getActiveTab());
+  });
+  webviewResizeObserver.observe(elements.webviewStack);
+  window.addEventListener("resize", () => {
+    syncWebviewElementSize();
+    nudgeWebviewLayout(getActiveTab());
+  });
+  window.troveApi.onContextNewTab((payload) => {
+    openTabFromPayload(payload);
+  });
+  createTab();
+  await refreshProjects("");
+});

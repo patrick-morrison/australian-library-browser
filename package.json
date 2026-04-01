@@ -1,0 +1,30 @@
+{
+  "name": "trove-browser",
+  "version": "0.1.0",
+  "description": "A focused Electron browser for triaging online collections into self-describing research libraries.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "main.js",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "mcp:start": "node mcp/server.js",
+    "test:mcp": "node scripts/test-mcp.js",
+    "test:store": "node scripts/test-project-store-edge-cases.js",
+    "test:e2e": "node scripts/test-electron-smoke.js",
+    "test:fixtures": "node scripts/test-source-fixtures.js",
+    "inspect:pages": "node scripts/inspect-pages.js",
+    "probe:source": "node scripts/probe-source.js",
+    "collect:curated": "node scripts/collect-curated-projects.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "csv-parse": "^6.2.1",
+    "electron": "^35.1.4",
+    "js-yaml": "^4.1.0",
+    "jsdom": "^26.1.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.52.0"
+  }
+}

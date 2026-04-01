@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src https: http:;">
+    <title>Trove Library Browser</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="library-panel">
+        <div class="library-head">
+          <p class="eyebrow">Research</p>
+          <h1>Library</h1>
+          <p class="library-copy">Create a `.trovelibrary` project, browse supported collection sites live, and save what matters without losing your place.</p>
+        </div>
+
+        <div class="mode-switch" role="tablist" aria-label="App views">
+          <button id="mode-collect" type="button" class="mode-button is-active" data-mode="collect">Collect</button>
+          <button id="mode-manage" type="button" class="mode-button" data-mode="manage">Manage</button>
+          <button id="mode-projects" type="button" class="mode-button" data-mode="projects">Projects</button>
+          <button id="mode-plugins" type="button" class="mode-button" data-mode="plugins">Plugins</button>
+        </div>
+
+        <form id="project-form" class="project-form mode-section mode-projects">
+          <label for="project-name">New project</label>
+          <div class="project-form-row">
+            <input id="project-name" name="project-name" type="text" placeholder="Harvey irrigation">
+            <button type="submit">Create</button>
+          </div>
+          <div class="project-location-row">
+            <button id="choose-project-location" type="button" class="ghost-button">Choose Location</button>
+            <span id="project-location" class="message-text">Saving new libraries in this workspace by default.</span>
+          </div>
+        </form>
+
+        <section class="panel-section mode-section mode-plugins">
+          <div class="section-title-row">
+            <h2>Sources</h2>
+          </div>
+          <div id="source-list" class="source-list"></div>
+        </section>
+
+        <section class="panel-section mode-section mode-projects">
+          <div class="section-title-row">
+            <h2>Projects</h2>
+            <span id="project-count" class="section-count">0</span>
+          </div>
+          <div id="project-list" class="project-list"></div>
+        </section>
+
+        <section class="panel-section current-project mode-section mode-collect mode-manage">
+          <div class="section-title-row">
+            <h2>Project</h2>
+            <button id="open-project-folder" type="button" class="ghost-button" disabled>Open Folder</button>
+          </div>
+          <div id="project-details" class="project-details empty-state">
+            Create or select a project to start filing articles and images.
+          </div>
+        </section>
+
+        <section id="capture-panel" class="panel-section capture-panel mode-section mode-collect">
+          <div class="section-title-row">
+            <h2>Preview</h2>
+          </div>
+          <div id="capture-empty" class="capture-empty empty-state">
+            Browse normally. When a Trove or SLWA record is available, its markdown or image preview will appear here.
+          </div>
+          <div id="capture-body" class="capture-body" hidden>
+            <div class="capture-actions">
+              <button id="capture-collect" type="button" class="primary-action" disabled>Collect</button>
+              <button id="capture-ignore" type="button" class="secondary-action" disabled>Ignore</button>
+              <button id="capture-open-page" type="button" class="ghost-button">Open Page</button>
+              <span id="capture-state" class="capture-state" hidden>Collected</span>
+            </div>
+            <section id="capture-image-section" class="capture-section" hidden>
+              <div id="capture-image-gallery" class="capture-image-gallery"></div>
+            </section>
+            <section class="capture-section">
+              <div id="capture-markdown" class="capture-markdown"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel-section mode-section mode-manage">
+          <div class="section-title-row">
+            <h2>Recent Saves</h2>
+          </div>
+          <div id="recent-saves" class="recent-saves empty-state">No saved items yet.</div>
+        </section>
+      </aside>
+
+      <div
+        id="sidebar-resizer"
+        class="sidebar-resizer"
+        role="separator"
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+      ></div>
+
+      <main class="browser-panel">
+        <header id="browser-toolbar" class="browser-toolbar">
+          <div class="toolbar-row">
+            <button id="back-button" type="button" class="nav-button" title="Back">←</button>
+            <button id="forward-button" type="button" class="nav-button" title="Forward">→</button>
+            <button id="reload-button" type="button" class="nav-button" title="Reload">↻</button>
+            <form id="address-form" class="address-form">
+              <input id="address-input" type="text" value="https://trove.nla.gov.au/" spellcheck="false">
+            </form>
+            <button id="new-tab-button" type="button" class="accent-button">New Tab</button>
+            <button id="debug-toggle" type="button" class="ghost-button">Debug</button>
+          </div>
+          <div id="tabs" class="tabs"></div>
+        </header>
+
+        <section id="collect-view" class="browser-stage app-view">
+          <div id="webview-stack" class="webview-stack"></div>
+        </section>
+
+        <section id="manage-view" class="manage-view app-view" hidden>
+          <div class="manage-toolbar">
+            <div class="section-title-row">
+              <h2>Collection Inventory</h2>
+              <span id="manage-summary" class="section-count">0 items</span>
+            </div>
+            <div class="manage-toolbar-actions">
+              <input
+                id="manage-search"
+                type="search"
+                class="manage-search"
+                placeholder="Filter titles, sources, or URLs"
+                spellcheck="false"
+              >
+              <div class="manage-filter" role="tablist" aria-label="Inventory filter">
+                <button id="filter-all" type="button" class="filter-button is-active" data-filter="all">All</button>
+                <button id="filter-saved" type="button" class="filter-button" data-filter="saved">Collected</button>
+                <button id="filter-ignored" type="button" class="filter-button" data-filter="ignored">Ignored</button>
+                <button id="filter-uncollected" type="button" class="filter-button" data-filter="uncollected">Uncollected</button>
+              </div>
+              <button id="open-items-csv" type="button" class="ghost-button" disabled>Open Native CSV</button>
+            </div>
+          </div>
+          <div id="manage-list" class="manage-list empty-state">Select a project to manage its collected items.</div>
+        </section>
+
+        <section id="projects-view" class="projects-view app-view" hidden>
+          <div class="projects-stage">
+            <article class="projects-card projects-card-primary">
+              <h2>Current Project</h2>
+              <div id="projects-focus" class="projects-focus empty-state">Select a library to see its working summary.</div>
+            </article>
+            <article class="projects-card">
+              <h2>Library Flow</h2>
+              <div id="projects-workflow" class="projects-workflow"></div>
+            </article>
+            <article class="projects-card projects-card-muted">
+              <h2>Recent Activity</h2>
+              <div id="projects-activity" class="projects-activity empty-state">Collected and ignored records will appear here.</div>
+            </article>
+          </div>
+        </section>
+
+        <section id="plugins-view" class="plugins-view app-view" hidden>
+          <div class="plugins-stage">
+            <article class="plugins-card plugins-card-primary">
+              <h2>Supported Sources</h2>
+              <div id="plugins-supported" class="plugins-supported"></div>
+            </article>
+            <article class="plugins-card">
+              <h2>New Source Intake</h2>
+              <p class="message-text">Paste representative URLs from a new library site: a landing page, search results, one or two detail pages, and a media page if it has one.</p>
+              <label class="plugins-field" for="plugin-seed-urls">Seed URLs</label>
+              <textarea id="plugin-seed-urls" class="plugins-textarea" spellcheck="false" placeholder="https://example-library/search?q=wellington+dam&#10;https://example-library/record/123&#10;https://example-library/object/456"></textarea>
+              <div class="plugins-actions">
+                <button id="plugin-copy-prompt" type="button" class="primary-action">Copy Prompt</button>
+                <button id="plugin-copy-probe-command" type="button" class="ghost-button">Copy Probe Command</button>
+              </div>
+              <p id="plugin-status" class="message-text">Paste URLs to generate a reusable Codex/Claude integration prompt.</p>
+            </article>
+            <article class="plugins-card plugins-card-muted">
+              <h2>Integration Prompt</h2>
+              <pre id="plugin-prompt-output" class="plugin-prompt-output"></pre>
+            </article>
+          </div>
+        </section>
+
+        <footer id="action-bar" class="action-bar">
+          <div class="action-copy">
+            <p class="eyebrow">Capture</p>
+            <div class="status-line">
+              <strong id="page-status">Ready</strong>
+              <span id="page-kind" class="page-kind">Open a supported collection page.</span>
+            </div>
+            <p id="message" class="message-text">Select a project in the library, then browse Trove or SLWA normally.</p>
+          </div>
+        </footer>
+
+        <section id="debug-drawer" class="debug-drawer" hidden>
+          <div class="debug-toolbar">
+            <div>
+              <p class="eyebrow">Reverse Engineering</p>
+              <strong>Debug Terminal</strong>
+              <p id="debug-cwd" class="message-text">Running in workspace root.</p>
+            </div>
+            <div class="debug-actions">
+              <button id="debug-save-page" type="button" class="ghost-button">Dump Page</button>
+              <button id="debug-save-item" type="button" class="ghost-button">Dump Item</button>
+              <button id="debug-save-preview" type="button" class="ghost-button">Dump Preview</button>
+              <button id="debug-close" type="button" class="ghost-button">Close</button>
+            </div>
+          </div>
+          <form id="debug-form" class="debug-form">
+            <input id="debug-command" type="text" spellcheck="false" placeholder="rg -n 'Wellington Dam' .">
+            <button type="submit" class="primary-action">Run</button>
+          </form>
+          <pre id="debug-output" class="debug-output">Terminal output will appear here.</pre>
+        </section>
+      </main>
+    </div>
+    <template id="project-card-template">
+      <button type="button" class="project-card">
+        <span class="project-name"></span>
+        <span class="project-meta"></span>
+      </button>
+    </template>
+
+    <template id="recent-item-template">
+      <article class="recent-item">
+        <div class="recent-item-main">
+          <div class="recent-top">
+            <span class="recent-type"></span>
+            <span class="recent-source"></span>
+          </div>
+          <strong class="recent-title"></strong>
+          <span class="recent-meta"></span>
+        </div>
+        <div class="recent-actions">
+          <button type="button" class="ghost-button recent-open-app">Open In App</button>
+          <button type="button" class="ghost-button recent-open-file">Open Native File</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="manage-item-template">
+      <article class="manage-item">
+        <div class="manage-item-main">
+          <div class="manage-item-top">
+            <span class="manage-item-status"></span>
+            <span class="manage-item-type"></span>
+            <span class="manage-item-source"></span>
+          </div>
+          <strong class="manage-item-title"></strong>
+          <div class="manage-item-meta"></div>
+          <div class="manage-item-preview">
+            <div class="manage-item-image-wrap" hidden>
+              <img class="manage-item-image" alt="">
+            </div>
+            <div class="manage-item-markdown">Loading markdown…</div>
+          </div>
+        </div>
+        <div class="manage-item-actions">
+          <button type="button" class="ghost-button manage-open-page">Open In App</button>
+          <button type="button" class="ghost-button manage-open-file">Open Native File</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="./source-plugins.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
