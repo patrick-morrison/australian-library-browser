@@ -20,6 +20,64 @@
     return [...new Set(values.filter(Boolean).map((value) => normalizeUrl(value)).filter(Boolean))];
   }
 
+  function getMatchKeys(value) {
+    const normalized = normalizeUrl(value);
+    if (!normalized) {
+      return [];
+    }
+
+    const keys = [normalized];
+
+    try {
+      const url = new URL(normalized);
+      const hostname = url.hostname.toLowerCase();
+      const pathname = url.pathname;
+      const pathnameWithSearch = `${url.pathname}${url.search}`;
+
+      if (hostname === "trove.nla.gov.au" || hostname === "nla.gov.au") {
+        const articleMatch =
+          pathname.match(/\/newspaper\/article\/(\d+)/i) ||
+          normalized.match(/nla\.news-article(\d+)/i);
+        if (articleMatch) {
+          keys.push(`trove:newspaper:${articleMatch[1]}`);
+        }
+        const workMatch = pathname.match(/\/work\/(\d+)/i);
+        if (workMatch) {
+          keys.push(`trove:work:${workMatch[1]}`);
+        }
+      }
+
+      if (/^(purl|catalogue|encore)\.slwa\.wa\.gov\.au$/i.test(hostname)) {
+        const assetMatch = normalized.match(/slwa_([a-z0-9]+(?:_[0-9]+)?)/i);
+        if (assetMatch) {
+          const assetId = assetMatch[1].toLowerCase();
+          keys.push(`slwa:${assetId}`);
+          const parentId = assetId.replace(/_\d+$/, "");
+          if (parentId && parentId !== assetId) {
+            keys.push(`slwa:${parentId}`);
+          }
+        }
+        const recordMatch =
+          pathnameWithSearch.match(/\/record=b([a-z0-9]+)(?:~|$)/i) ||
+          pathnameWithSearch.match(/\/record\/C__Rb([a-z0-9]+)__/i);
+        if (recordMatch) {
+          keys.push(`slwa:${recordMatch[1].toLowerCase()}`);
+        }
+      }
+
+      if (hostname === "museum.wa.gov.au") {
+        const artefactMatch = pathname.match(/\/maritime-archaeology-db\/artefacts\/([^/?#]+)/i);
+        if (artefactMatch) {
+          keys.push(`wamuseum:${artefactMatch[1].toLowerCase()}`);
+        }
+      }
+    } catch {
+      return [normalized];
+    }
+
+    return [...new Set(keys.filter(Boolean))];
+  }
+
   function makeItemKey(item) {
     return [item.source || "unknown", item.type || "item", item.id || ""].join(":");
   }
@@ -219,6 +277,17 @@
         const hostname = location.hostname.toLowerCase();
         const isViewer = hostname === "purl.slwa.wa.gov.au";
         const isCatalogue = hostname.includes("slwa.wa.gov.au") && /\\/iii\\/encore\\/record\\//i.test(location.pathname);
+        const getMetadataDescription = (metadataFields) => {
+          const preferredLabels = ["summary", "description", "abstract", "notes", "scope and content"];
+          const normalized = Array.isArray(metadataFields) ? metadataFields : [];
+          for (const preferredLabel of preferredLabels) {
+            const field = normalized.find((entry) => helpers.cleanText(entry?.label || "").toLowerCase() === preferredLabel);
+            if (field?.value) {
+              return helpers.cleanText(field.value);
+            }
+          }
+          return "";
+        };
         if (!isViewer && !isCatalogue) {
           return { supported: false };
         }
@@ -272,7 +341,7 @@
                 ...collectionItems.flatMap((entry) => [entry.viewerUrl, entry.imageUrl, entry.thumbnailUrl])
               ],
               citation: title + ". State Library of Western Australia. " + permalink,
-              description: metadataFields.map((field) => field.label + ": " + field.value).join(" "),
+              description: getMetadataDescription(metadataFields),
               fullText: "",
               sourceTitle: "State Library of Western Australia",
               imageUrl: collectionItems[0]?.imageUrl || collectionItems[0]?.thumbnailUrl || "",
@@ -333,7 +402,7 @@
               helpers.normalizeUrl(downloadHref)
             ],
             citation,
-            description: metadataFields.map((field) => field.label + ": " + field.value).join(" "),
+            description: getMetadataDescription(metadataFields),
             fullText: "",
             sourceTitle: "State Library of Western Australia",
             imageUrl,
@@ -599,15 +668,91 @@
         const badgeId = "trove-library-page-badge";
         const actionClass = "trove-library-inline-actions";
         const actionPrefix = "__trove_library_action__";
+        const stateKey = "__troveLibraryPageState";
         const root = document.head || document.documentElement;
-        const normalize = ${normalizeUrl.toString()};
+        const normalizeUrl = ${normalizeUrl.toString()};
+        const normalize = normalizeUrl;
+        const getMatchKeys = ${getMatchKeys.toString()};
         const supportedPatterns = [${supportedLinkPatterns()
           .map((pattern) => pattern.toString())
           .join(",")}];
-        const savedUrls = new Set(state.saved.flatMap((item) => item.urls.map((url) => normalize(url))));
-        const ignoredUrls = new Set(state.ignored.flatMap((item) => item.urls.map((url) => normalize(url))));
+        const pageState = window[stateKey] || (window[stateKey] = {});
+        pageState.savedUrls = Array.from(new Set(state.saved.flatMap((item) => item.urls.map((url) => normalize(url))).filter(Boolean)));
+        pageState.ignoredUrls = Array.from(new Set(state.ignored.flatMap((item) => item.urls.map((url) => normalize(url))).filter(Boolean)));
+        pageState.savedMatchKeys = Array.from(
+          new Set(state.saved.flatMap((item) => item.urls.flatMap((url) => getMatchKeys(url))).filter(Boolean))
+        );
+        pageState.ignoredMatchKeys = Array.from(
+          new Set(state.ignored.flatMap((item) => item.urls.flatMap((url) => getMatchKeys(url))).filter(Boolean))
+        );
         const isSupportedLink = (href) => supportedPatterns.some((pattern) => pattern.test(href));
         const cleanText = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+        const getSavedUrls = () => new Set((window[stateKey]?.savedUrls || []).map((url) => normalize(url)).filter(Boolean));
+        const getIgnoredUrls = () => new Set((window[stateKey]?.ignoredUrls || []).map((url) => normalize(url)).filter(Boolean));
+        const getSavedMatchKeys = () => new Set((window[stateKey]?.savedMatchKeys || []).filter(Boolean));
+        const getIgnoredMatchKeys = () => new Set((window[stateKey]?.ignoredMatchKeys || []).filter(Boolean));
+        const getEntryContainer = (anchor, href) => {
+          if (!anchor || !href) {
+            return null;
+          }
+          let host = "";
+          try {
+            host = new URL(href).hostname.toLowerCase();
+          } catch {
+            host = location.hostname.toLowerCase();
+          }
+          if (host === "trove.nla.gov.au") {
+            return anchor.closest(".result") || anchor.closest("[class*='result']");
+          }
+          if (host === "encore.slwa.wa.gov.au") {
+            return anchor.closest(".search-result-item");
+          }
+          if (host === "catalogue.slwa.wa.gov.au" || host === "purl.slwa.wa.gov.au") {
+            return anchor.closest(".briefcitDetail, .browseEntry, .bibRecordLink, .viewPanel, .page");
+          }
+          if (host === "museum.wa.gov.au") {
+            return anchor.closest(".wrap");
+          }
+          return null;
+        };
+        const resolveStatusForHref = (href) => {
+          const normalizedHref = normalize(href);
+          if (!normalizedHref) {
+            return "";
+          }
+          const savedUrls = getSavedUrls();
+          const ignoredUrls = getIgnoredUrls();
+          if (savedUrls.has(normalizedHref)) {
+            return "saved";
+          }
+          if (ignoredUrls.has(normalizedHref)) {
+            return "ignored";
+          }
+          const matchKeys = getMatchKeys(normalizedHref);
+          const savedMatchKeys = getSavedMatchKeys();
+          const ignoredMatchKeys = getIgnoredMatchKeys();
+          if (matchKeys.some((key) => savedMatchKeys.has(key))) {
+            return "saved";
+          }
+          if (matchKeys.some((key) => ignoredMatchKeys.has(key))) {
+            return "ignored";
+          }
+          return "";
+        };
+        const resolveEntryStatus = (anchor, href) => {
+          const directStatus = resolveStatusForHref(href);
+          if (directStatus) {
+            return directStatus;
+          }
+          const entryContainer = getEntryContainer(anchor, href);
+          if (!entryContainer) {
+            return "";
+          }
+          const linkStatuses = Array.from(entryContainer.querySelectorAll("a[href]"))
+            .map((node) => resolveStatusForHref(node.href))
+            .filter(Boolean);
+          return linkStatuses.includes("saved") ? "saved" : linkStatuses.includes("ignored") ? "ignored" : "";
+        };
         const isEntryLink = (anchor, href) => {
           if (!anchor || !href || !isSupportedLink(href)) {
             return false;
@@ -666,15 +811,21 @@
           style.id = styleId;
           style.textContent = \`
             a.trove-library-saved {
-              background: rgba(216, 240, 219, 0.9) !important;
-              box-shadow: inset 0 0 0 2px rgba(33, 81, 54, 0.32) !important;
-              color: #215136 !important;
+              color: #2f6b57 !important;
+              font-weight: 700 !important;
             }
             a.trove-library-ignored {
-              background: rgba(231, 224, 216, 0.92) !important;
-              box-shadow: inset 0 0 0 2px rgba(108, 98, 88, 0.28) !important;
-              color: #6c6258 !important;
-              opacity: 0.68 !important;
+              color: inherit !important;
+            }
+            .trove-library-entry-saved {
+              background: transparent !important;
+              box-shadow: none !important;
+            }
+            .trove-library-entry-ignored {
+              opacity: 0.5 !important;
+            }
+            .trove-library-entry-ignored * {
+              color: inherit !important;
             }
             .\${actionClass} {
               display: inline-flex;
@@ -689,6 +840,23 @@
               padding: 4px 10px;
               font: 600 12px/1.1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
               cursor: pointer;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              gap: 6px;
+            }
+            .\${actionClass} button.is-loading {
+              opacity: 0.92;
+              pointer-events: none;
+            }
+            .\${actionClass} button.is-loading::before {
+              content: "";
+              width: 10px;
+              height: 10px;
+              border-radius: 999px;
+              border: 2px solid currentColor;
+              border-right-color: transparent;
+              animation: troveLibrarySpin 0.8s linear infinite;
             }
             .\${actionClass} .preview {
               background: rgba(45, 91, 74, 0.12);
@@ -698,9 +866,14 @@
               background: rgba(157, 63, 38, 0.12);
               color: #7f311c;
             }
+            .\${actionClass} .ignore {
+              background: rgba(108, 98, 88, 0.12);
+              color: #6c6258;
+            }
             .\${actionClass} .collect.saved {
-              background: rgba(216, 240, 219, 0.95);
-              color: #215136;
+              background: #2f6b57;
+              color: #f6f3ee;
+              font-weight: 700;
             }
             .\${actionClass} .collect.ignored {
               background: rgba(231, 224, 216, 0.95);
@@ -724,28 +897,95 @@
               background: #e7e0d8;
               color: #6c6258;
             }
+            #\${badgeId}.loading {
+              background: rgba(255, 255, 255, 0.96);
+              color: #5b4c3d;
+              display: inline-flex;
+              align-items: center;
+              gap: 8px;
+            }
+            #\${badgeId}.loading::before {
+              content: "";
+              width: 12px;
+              height: 12px;
+              border-radius: 999px;
+              border: 2px solid currentColor;
+              border-right-color: transparent;
+              animation: troveLibrarySpin 0.8s linear infinite;
+            }
+            @keyframes troveLibrarySpin {
+              to {
+                transform: rotate(360deg);
+              }
+            }
           \`;
           root.appendChild(style);
         }
         const emit = (payload) => {
           console.log(actionPrefix + JSON.stringify(payload));
         };
-        const ensureInlineActions = (anchor, href) => {
+        const beginInlineLoading = (button, label) => {
+          if (!button) {
+            return;
+          }
+          button.classList.add("is-loading");
+          button.disabled = true;
+          button.textContent = label;
+        };
+        const ensureInlineActions = (anchor, href, forcedStatus = "") => {
+          const entryStatus = forcedStatus || resolveEntryStatus(anchor, href);
           if (anchor.dataset.troveLibraryBound === "true") {
             const existing = anchor.nextElementSibling;
             if (existing && existing.classList.contains(actionClass)) {
+              const preview = existing.querySelector(".preview");
               const collect = existing.querySelector(".collect");
-              if (savedUrls.has(href)) {
+              const ignore = existing.querySelector(".ignore");
+              const loadingByUrl = window[stateKey]?.loadingByUrl || {};
+              const loadingEntry = loadingByUrl[normalize(href)] || null;
+              const loadingAction = loadingEntry?.action || "";
+              const loadingLabel = loadingEntry?.label || "";
+              if (preview) {
+                preview.classList.toggle("is-loading", loadingAction === "preview");
+                preview.disabled = loadingAction === "preview";
+                preview.textContent = loadingAction === "preview" ? loadingLabel || "Previewing…" : "Preview";
+              }
+              if (entryStatus === "saved") {
                 collect.classList.add("saved");
                 collect.classList.remove("ignored");
-                collect.textContent = "Collected";
-              } else if (ignoredUrls.has(href)) {
-                collect.classList.add("ignored");
-                collect.classList.remove("saved");
-                collect.textContent = "Ignored";
+                collect.textContent = loadingAction === "uncollect" ? loadingLabel || "Removing…" : "Collected";
+                collect.disabled = false;
+                collect.classList.toggle("is-loading", loadingAction === "uncollect");
+                if (ignore) {
+                  ignore.classList.remove("ignored");
+                  ignore.textContent = "Ignore";
+                  ignore.disabled = true;
+                  ignore.hidden = true;
+                  ignore.classList.remove("is-loading");
+                }
+              } else if (entryStatus === "ignored") {
+                collect.classList.remove("saved", "ignored");
+                collect.textContent = loadingAction === "collect" ? loadingLabel || "Collecting…" : "Collect";
+                collect.disabled = loadingAction === "collect";
+                collect.classList.toggle("is-loading", loadingAction === "collect");
+                if (ignore) {
+                  ignore.classList.add("ignored");
+                  ignore.textContent = loadingAction === "unignore" ? loadingLabel || "Unignoring…" : "Unignore";
+                  ignore.disabled = loadingAction === "unignore";
+                  ignore.hidden = false;
+                  ignore.classList.toggle("is-loading", loadingAction === "unignore");
+                }
               } else {
                 collect.classList.remove("saved", "ignored");
-                collect.textContent = "Collect";
+                collect.textContent = loadingAction === "collect" ? loadingLabel || "Collecting…" : "Collect";
+                collect.disabled = loadingAction === "collect";
+                collect.classList.toggle("is-loading", loadingAction === "collect");
+                if (ignore) {
+                  ignore.classList.remove("ignored");
+                  ignore.textContent = loadingAction === "ignore" ? loadingLabel || "Ignoring…" : "Ignore";
+                  ignore.disabled = loadingAction === "ignore";
+                  ignore.hidden = false;
+                  ignore.classList.toggle("is-loading", loadingAction === "ignore");
+                }
               }
             }
             return;
@@ -760,6 +1000,7 @@
           preview.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
+            beginInlineLoading(preview, "Previewing…");
             emit({ action: "preview-link", url: href, label: anchor.textContent.trim() });
           });
           const collect = document.createElement("button");
@@ -769,28 +1010,46 @@
           collect.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
+            beginInlineLoading(collect, collect.classList.contains("saved") ? "Removing…" : "Collecting…");
             emit({ action: "collect-link", url: href, label: anchor.textContent.trim() });
           });
-          controls.append(preview, collect);
+          const ignore = document.createElement("button");
+          ignore.type = "button";
+          ignore.className = "ignore";
+          ignore.textContent = "Ignore";
+          ignore.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            beginInlineLoading(ignore, ignore.classList.contains("ignored") ? "Unignoring…" : "Ignoring…");
+            emit({ action: "ignore-link", url: href, label: anchor.textContent.trim() });
+          });
+          controls.append(preview, collect, ignore);
           anchor.insertAdjacentElement("afterend", controls);
           ensureInlineActions(anchor, href);
         };
-        const apply = () => {
+          const apply = () => {
           document.querySelectorAll("a.trove-library-saved, a.trove-library-ignored").forEach((node) => {
             node.classList.remove("trove-library-saved", "trove-library-ignored");
+          });
+          document.querySelectorAll(".trove-library-entry-saved, .trove-library-entry-ignored").forEach((node) => {
+            node.classList.remove("trove-library-entry-saved", "trove-library-entry-ignored");
           });
           document.querySelectorAll("a[href]").forEach((anchor) => {
             const href = normalize(anchor.href);
             if (!href) {
               return;
             }
+            const entryStatus = resolveEntryStatus(anchor, href);
             if (isEntryLink(anchor, href)) {
-              ensureInlineActions(anchor, href);
+              ensureInlineActions(anchor, href, entryStatus);
             }
-            if (savedUrls.has(href)) {
+            const entryContainer = getEntryContainer(anchor, href);
+            if (entryStatus === "saved") {
               anchor.classList.add("trove-library-saved");
-            } else if (ignoredUrls.has(href)) {
+              entryContainer?.classList.add("trove-library-entry-saved");
+            } else if (entryStatus === "ignored") {
               anchor.classList.add("trove-library-ignored");
+              entryContainer?.classList.add("trove-library-entry-ignored");
             }
           });
           const currentUrl = normalize(location.href);
@@ -801,12 +1060,35 @@
           if (!currentUrl) {
             return;
           }
-          if (!savedUrls.has(currentUrl) && !ignoredUrls.has(currentUrl)) {
+          const currentStatus = resolveStatusForHref(currentUrl);
+          if (!currentStatus) {
+            const loadingEntry = window[stateKey]?.loadingByUrl?.[currentUrl];
+            const loadingAction = loadingEntry?.action;
+            if (!loadingAction) {
+              return;
+            }
+            badge = document.createElement("div");
+            badge.id = badgeId;
+            badge.className = "loading";
+            badge.textContent =
+              loadingEntry?.label ||
+              (loadingAction === "preview"
+                ? "Building preview…"
+                : loadingAction === "collect"
+                  ? "Collecting…"
+                  : loadingAction === "ignore"
+                    ? "Ignoring…"
+                    : loadingAction === "unignore"
+                      ? "Unignoring…"
+                      : loadingAction === "uncollect"
+                        ? "Removing from library…"
+                        : "Updating…");
+            document.body.appendChild(badge);
             return;
           }
           badge = document.createElement("div");
           badge.id = badgeId;
-          if (savedUrls.has(currentUrl)) {
+          if (currentStatus === "saved") {
             badge.className = "saved";
             badge.textContent = "Saved in library";
           } else {
@@ -815,9 +1097,16 @@
           }
           document.body.appendChild(badge);
         };
+        pageState.apply = apply;
         apply();
         if (!window.__troveLibraryObserver) {
-          window.__troveLibraryObserver = new MutationObserver(() => apply());
+          window.__troveLibraryObserver = new MutationObserver(() => {
+            try {
+              window[stateKey]?.apply?.();
+            } catch {
+              // Ignore pages that mutate while site scripts are still settling.
+            }
+          });
           window.__troveLibraryObserver.observe(document.documentElement, { childList: true, subtree: true });
         }
       })();
@@ -831,7 +1120,40 @@
         const urls = new Set((${JSON.stringify(payload.urls || [])} || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const badgeId = "trove-library-page-badge";
         const actionClass = "trove-library-inline-actions";
+        const stateKey = "__troveLibraryPageState";
+        const normalizeUrl = ${normalizeUrl.toString()};
+        const getMatchKeys = ${getMatchKeys.toString()};
         if (!urls.size) {
+          return;
+        }
+
+        const pageState = window[stateKey] || (window[stateKey] = {});
+        const savedUrls = new Set((pageState.savedUrls || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
+        const ignoredUrls = new Set((pageState.ignoredUrls || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
+        const savedMatchKeys = new Set((pageState.savedMatchKeys || []).filter(Boolean));
+        const ignoredMatchKeys = new Set((pageState.ignoredMatchKeys || []).filter(Boolean));
+        urls.forEach((url) => {
+          const matchKeys = getMatchKeys(url);
+          savedUrls.delete(url);
+          ignoredUrls.delete(url);
+          matchKeys.forEach((key) => {
+            savedMatchKeys.delete(key);
+            ignoredMatchKeys.delete(key);
+          });
+          if (status === "saved") {
+            savedUrls.add(url);
+            matchKeys.forEach((key) => savedMatchKeys.add(key));
+          } else if (status === "ignored") {
+            ignoredUrls.add(url);
+            matchKeys.forEach((key) => ignoredMatchKeys.add(key));
+          }
+        });
+        pageState.savedUrls = Array.from(savedUrls);
+        pageState.ignoredUrls = Array.from(ignoredUrls);
+        pageState.savedMatchKeys = Array.from(savedMatchKeys);
+        pageState.ignoredMatchKeys = Array.from(ignoredMatchKeys);
+        if (typeof pageState.apply === "function") {
+          pageState.apply();
           return;
         }
 
@@ -841,23 +1163,42 @@
             return;
           }
           anchor.classList.remove("trove-library-saved", "trove-library-ignored");
-          anchor.classList.add(status === "saved" ? "trove-library-saved" : "trove-library-ignored");
+          if (status === "saved" || status === "ignored") {
+            anchor.classList.add(status === "saved" ? "trove-library-saved" : "trove-library-ignored");
+          }
           const controls = anchor.nextElementSibling;
           if (controls && controls.classList.contains(actionClass)) {
             const collect = controls.querySelector(".collect");
+            const ignore = controls.querySelector(".ignore");
             if (collect) {
               collect.classList.remove("saved", "ignored");
               if (status === "saved") {
                 collect.classList.add("saved");
                 collect.textContent = "Collected";
-                collect.disabled = true;
+                collect.disabled = false;
               } else if (status === "ignored") {
-                collect.classList.add("ignored");
-                collect.textContent = "Ignored";
-                collect.disabled = true;
+                collect.textContent = "Collect";
+                collect.disabled = false;
               } else {
                 collect.textContent = "Collect";
                 collect.disabled = false;
+              }
+            }
+            if (ignore) {
+              ignore.classList.remove("ignored");
+              if (status === "saved") {
+                ignore.textContent = "Ignore";
+                ignore.disabled = true;
+                ignore.hidden = true;
+              } else if (status === "ignored") {
+                ignore.classList.add("ignored");
+                ignore.textContent = "Unignore";
+                ignore.disabled = false;
+                ignore.hidden = false;
+              } else {
+                ignore.textContent = "Ignore";
+                ignore.disabled = false;
+                ignore.hidden = false;
               }
             }
           }
@@ -882,6 +1223,122 @@
     `;
   }
 
+  function buildImmediateLoadingScript(payload) {
+    return `
+      (() => {
+        const active = ${JSON.stringify(Boolean(payload.active))};
+        const action = ${JSON.stringify(payload.action || "")};
+        const label = ${JSON.stringify(payload.label || "")};
+        const urls = new Set((${JSON.stringify(payload.urls || [])} || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
+        const stateKey = "__troveLibraryPageState";
+        const normalizeUrl = ${normalizeUrl.toString()};
+        if (!urls.size) {
+          return;
+        }
+        const pageState = window[stateKey] || (window[stateKey] = {});
+        const loadingByUrl = { ...(pageState.loadingByUrl || {}) };
+        urls.forEach((url) => {
+          if (active) {
+            loadingByUrl[url] = { action, label };
+          } else {
+            delete loadingByUrl[url];
+          }
+        });
+        pageState.loadingByUrl = loadingByUrl;
+        if (typeof pageState.apply === "function") {
+          pageState.apply();
+        }
+      })();
+    `;
+  }
+
+  function buildSearchExportScript() {
+    return `
+      (() => {
+        const normalize = ${normalizeUrl.toString()};
+        const supportedPatterns = [${supportedLinkPatterns()
+          .map((pattern) => pattern.toString())
+          .join(",")}];
+        const isSupportedLink = (href) => supportedPatterns.some((pattern) => pattern.test(href));
+        const cleanText = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+        const isEntryLink = (anchor, href) => {
+          if (!anchor || !href || !isSupportedLink(href)) {
+            return false;
+          }
+          let host = "";
+          let hrefPathWithSearch = "";
+          try {
+            const parsedHref = new URL(href);
+            host = parsedHref.hostname.toLowerCase();
+            hrefPathWithSearch = (parsedHref.pathname + parsedHref.search).toLowerCase();
+          } catch {
+            host = location.hostname.toLowerCase();
+            hrefPathWithSearch = "";
+          }
+          const text = cleanText(anchor.textContent);
+          if (host === "trove.nla.gov.au") {
+            if (!text || text.length < 8) {
+              return false;
+            }
+            if (anchor.closest(".quicknav, .thumbnail-column, nav, header, footer, .pagination, .custom-control-label, .crumb")) {
+              return false;
+            }
+            return Boolean(
+              anchor.closest(".result .title") ||
+                anchor.closest(".result")?.querySelector(".title a") === anchor ||
+                anchor.closest("[class*='result'] .title") ||
+                anchor.closest(".result")
+            );
+          }
+          if (host === "encore.slwa.wa.gov.au") {
+            return Boolean(
+              anchor.closest(".search-result-item") &&
+                anchor.closest(".dpBibTitle") &&
+                /^recordDisplayLink2Component/i.test(anchor.id || "")
+            );
+          }
+          if (location.hostname.toLowerCase() === "catalogue.slwa.wa.gov.au") {
+            if (anchor.closest("nav, header, footer, .menu")) {
+              return false;
+            }
+            return Boolean(
+              host === "purl.slwa.wa.gov.au" ||
+              (host === "catalogue.slwa.wa.gov.au" && hrefPathWithSearch.includes("/record=b"))
+            ) && Boolean(anchor.closest(".viewPanel, .briefcitDetail, .browseEntry, .bibRecordLink, .page"));
+          }
+          if (host === "museum.wa.gov.au") {
+            if (anchor.closest(".pager, .breadcrumb, nav, header, footer, .menu, .skip-links")) {
+              return false;
+            }
+            return Boolean(anchor.closest(".wrap") && anchor.parentElement?.classList.contains("title"));
+          }
+          return false;
+        };
+
+        const seen = new Set();
+        const rows = [];
+        document.querySelectorAll("a[href]").forEach((anchor) => {
+          const href = normalize(anchor.href);
+          if (!href || seen.has(href) || !isEntryLink(anchor, href)) {
+            return;
+          }
+          seen.add(href);
+          rows.push({
+            position: rows.length + 1,
+            title: cleanText(anchor.textContent),
+            url: href
+          });
+        });
+
+        return {
+          pageTitle: cleanText(document.title || document.querySelector("h1")?.textContent || "Search"),
+          pageUrl: normalize(location.href),
+          rows
+        };
+      })();
+    `;
+  }
+
   function itemStatus(project, item) {
     if (!project || !item) {
       return "";
@@ -896,6 +1353,7 @@
     }
 
     const aliases = uniqueValues([item.url, ...(item.aliases || [])]);
+    const itemMatchKeys = [...new Set(aliases.flatMap((alias) => getMatchKeys(alias)))];
     if (
       (project.saved || []).some((entry) =>
         uniqueValues([entry.url, ...(entry.aliases || [])]).some((alias) => aliases.includes(alias))
@@ -910,6 +1368,24 @@
     ) {
       return "ignored";
     }
+    if (
+      (project.saved || []).some((entry) =>
+        uniqueValues([entry.url, ...(entry.aliases || [])])
+          .flatMap((alias) => getMatchKeys(alias))
+          .some((matchKey) => itemMatchKeys.includes(matchKey))
+      )
+    ) {
+      return "saved";
+    }
+    if (
+      (project.ignored || []).some((entry) =>
+        uniqueValues([entry.url, ...(entry.aliases || [])])
+          .flatMap((alias) => getMatchKeys(alias))
+          .some((matchKey) => itemMatchKeys.includes(matchKey))
+      )
+    ) {
+      return "ignored";
+    }
     return "";
   }
 
@@ -917,7 +1393,9 @@
     listPlugins,
     buildExtractionScript,
     buildDecorationScript,
+    buildImmediateLoadingScript,
     buildImmediateStatusScript,
+    buildSearchExportScript,
     projectStatePayload,
     itemStatus,
     makeItemKey

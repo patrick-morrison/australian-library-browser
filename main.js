@@ -25,6 +25,7 @@ const BROWSER_FETCH_HEADERS = {
 async function listKnownProjects() {
   const directories = [workspaceRoot, ...(await libraryRegistry.readLibraryDirectories())];
   const uniqueDirectories = [...new Set(directories)];
+  const hiddenProjects = new Set(await libraryRegistry.readHiddenProjectPaths());
   const grouped = await Promise.all(uniqueDirectories.map((directory) => projectStore.listProjects(directory)));
   const seen = new Set();
   return grouped
@@ -36,6 +37,7 @@ async function listKnownProjects() {
       seen.add(project.path);
       return true;
     })
+    .filter((project) => !hiddenProjects.has(project.path))
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -422,6 +424,12 @@ function installWebContentsContextMenus(mainWindow) {
           }
         });
         template.push({
+          label: "Copy Link",
+          click: () => {
+            clipboard.writeText(params.linkURL);
+          }
+        });
+        template.push({
           label: "Open Link Externally",
           click: () => {
             void shell.openExternal(params.linkURL);
@@ -472,9 +480,25 @@ app.whenReady().then(() => {
     if (baseDir !== workspaceRoot) {
       await libraryRegistry.registerLibraryDirectory(baseDir);
     }
+    await libraryRegistry.unhideProjectPath(project.path);
     return project;
   });
-  ipcMain.handle("projects:save-item", async (_event, projectPath, item) => projectStore.saveItem(projectPath, item));
+  ipcMain.handle("projects:hide", async (_event, projectPath) => {
+    await libraryRegistry.hideProjectPath(projectPath);
+    return true;
+  });
+  ipcMain.handle("projects:save-item", async (event, projectPath, item) =>
+    projectStore.saveItem(projectPath, item, (progress) => {
+      event.sender.send("projects:save-progress", progress);
+    })
+  );
+  ipcMain.handle("projects:save-search-results", async (_event, projectPath, searchExport) =>
+    projectStore.saveSearchResults(projectPath, searchExport)
+  );
+  ipcMain.handle("projects:list-searches", async (_event, projectPath) => projectStore.listSearchExports(projectPath));
+  ipcMain.handle("projects:delete-search", async (_event, projectPath, searchPath) =>
+    projectStore.deleteSearchExport(projectPath, searchPath)
+  );
   ipcMain.handle("projects:ignore-item", async (_event, projectPath, item) => projectStore.ignoreItem(projectPath, item));
   ipcMain.handle("projects:uncollect-item", async (_event, projectPath, item) =>
     projectStore.uncollectItem(projectPath, item)
@@ -517,6 +541,23 @@ app.whenReady().then(() => {
       properties: ["openDirectory", "createDirectory"]
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("dialog:choose-project-folder", async () => {
+    const result = await dialog.showOpenDialog({
+      title: "Open Existing Library",
+      buttonLabel: "Open Library",
+      properties: ["openDirectory"]
+    });
+    if (result.canceled || !result.filePaths[0]) {
+      return null;
+    }
+    const projectPath = result.filePaths[0];
+    if (!(await projectStore.isProjectDirectory(projectPath))) {
+      throw new Error("Choose a library folder.");
+    }
+    await libraryRegistry.registerLibraryDirectory(path.dirname(projectPath));
+    await libraryRegistry.unhideProjectPath(projectPath);
+    return projectPath;
   });
   ipcMain.handle("files:read-text", async (_event, targetPath) => fs.readFile(targetPath, "utf8"));
   ipcMain.handle("shell:open-path", async (_event, targetPath) => shell.openPath(targetPath));

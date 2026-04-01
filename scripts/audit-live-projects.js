@@ -167,7 +167,7 @@ async function collectCurrentPreview(page) {
 }
 
 async function createProject(page, name) {
-  await page.click("#mode-projects");
+  await page.click("#mode-manage");
   await page.fill("#project-name", name);
   await page.press("#project-name", "Enter");
   await page.waitForSelector("#capture-panel");
@@ -522,7 +522,7 @@ async function main() {
 
   try {
     const page = await app.firstWindow();
-    await page.waitForSelector("#mode-projects");
+    await page.waitForSelector("#mode-manage");
     await page.waitForTimeout(2500);
 
     const museum = await collectMuseumProject(page, projectNames.museum);

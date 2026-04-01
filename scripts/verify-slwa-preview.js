@@ -25,8 +25,8 @@ async function main() {
     });
 
     const page = await app.firstWindow();
-    await page.waitForSelector("#mode-projects");
-    await page.click("#mode-projects");
+    await page.waitForSelector("#mode-manage");
+    await page.click("#mode-manage");
     await page.fill("#project-name", projectName);
     await page.press("#project-name", "Enter");
     await page.waitForSelector("#capture-panel");

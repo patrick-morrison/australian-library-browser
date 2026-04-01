@@ -13,27 +13,24 @@
         <div class="library-head">
           <p class="eyebrow">Research</p>
           <h1>Library</h1>
-          <p class="library-copy">Create a `.trovelibrary` project, browse supported collection sites live, and save what matters without losing your place.</p>
+          <p class="library-copy">Create a plain library folder with a `.trovelibrary` manifest, browse supported collection sites live, and save what matters without losing your place.</p>
         </div>
 
         <div class="mode-switch" role="tablist" aria-label="App views">
           <button id="mode-collect" type="button" class="mode-button is-active" data-mode="collect">Collect</button>
-          <button id="mode-manage" type="button" class="mode-button" data-mode="manage">Manage</button>
-          <button id="mode-projects" type="button" class="mode-button" data-mode="projects">Projects</button>
-          <button id="mode-plugins" type="button" class="mode-button" data-mode="plugins">Plugins</button>
+          <button id="mode-manage" type="button" class="mode-button" data-mode="manage">Library</button>
+          <button id="mode-plugins" type="button" class="mode-button" data-mode="plugins">Settings</button>
         </div>
 
-        <form id="project-form" class="project-form mode-section mode-projects">
-          <label for="project-name">New project</label>
-          <div class="project-form-row">
-            <input id="project-name" name="project-name" type="text" placeholder="Harvey irrigation">
-            <button type="submit">Create</button>
+        <section class="library-controls mode-section mode-manage">
+          <div class="section-title-row">
+            <h2>Libraries</h2>
           </div>
-          <div class="project-location-row">
-            <button id="choose-project-location" type="button" class="ghost-button">Choose Location</button>
-            <span id="project-location" class="message-text">Saving new libraries in this workspace by default.</span>
+          <div class="library-controls-row">
+            <button id="new-project-button" type="button">New Library</button>
+            <button id="open-project-button" type="button" class="ghost-button">Open Existing</button>
           </div>
-        </form>
+        </section>
 
         <section class="panel-section mode-section mode-plugins">
           <div class="section-title-row">
@@ -42,9 +39,9 @@
           <div id="source-list" class="source-list"></div>
         </section>
 
-        <section class="panel-section mode-section mode-projects">
+        <section class="panel-section mode-section mode-manage">
           <div class="section-title-row">
-            <h2>Projects</h2>
+            <h2>Open Libraries</h2>
             <span id="project-count" class="section-count">0</span>
           </div>
           <div id="project-list" class="project-list"></div>
@@ -53,7 +50,10 @@
         <section class="panel-section current-project mode-section mode-collect mode-manage">
           <div class="section-title-row">
             <h2>Project</h2>
-            <button id="open-project-folder" type="button" class="ghost-button" disabled>Open Folder</button>
+            <div class="section-actions">
+              <button id="open-project-folder" type="button" class="ghost-button" disabled>Open Folder</button>
+              <button id="close-project-button" type="button" class="ghost-button" disabled>Close</button>
+            </div>
           </div>
           <div id="project-details" class="project-details empty-state">
             Create or select a project to start filing articles and images.
@@ -72,8 +72,8 @@
               <button id="capture-collect" type="button" class="primary-action" disabled>Collect</button>
               <button id="capture-ignore" type="button" class="secondary-action" disabled>Ignore</button>
               <button id="capture-open-page" type="button" class="ghost-button">Open Page</button>
-              <span id="capture-state" class="capture-state" hidden>Collected</span>
             </div>
+            <div id="capture-progress" class="capture-progress" hidden></div>
             <section id="capture-image-section" class="capture-section" hidden>
               <div id="capture-image-gallery" class="capture-image-gallery"></div>
             </section>
@@ -85,9 +85,10 @@
 
         <section class="panel-section mode-section mode-manage">
           <div class="section-title-row">
-            <h2>Recent Saves</h2>
+            <h2>Saved Searches</h2>
+            <button id="open-searches-folder" type="button" class="ghost-button" disabled>Open Folder</button>
           </div>
-          <div id="recent-saves" class="recent-saves empty-state">No saved items yet.</div>
+          <div id="saved-searches" class="saved-searches empty-state">No saved searches yet.</div>
         </section>
       </aside>
 
@@ -108,6 +109,13 @@
             <form id="address-form" class="address-form">
               <input id="address-input" type="text" value="https://trove.nla.gov.au/" spellcheck="false">
             </form>
+            <button id="save-search-button" type="button" class="ghost-button">Save</button>
+            <div class="toolbar-searches">
+              <button id="saved-searches-button" type="button" class="ghost-button" aria-haspopup="menu" aria-expanded="false">
+                Saved Searches
+              </button>
+              <div id="saved-searches-menu" class="saved-searches-menu" hidden></div>
+            </div>
             <button id="new-tab-button" type="button" class="accent-button">New Tab</button>
             <button id="debug-toggle" type="button" class="ghost-button">Debug</button>
           </div>
@@ -138,27 +146,14 @@
                 <button id="filter-ignored" type="button" class="filter-button" data-filter="ignored">Ignored</button>
                 <button id="filter-uncollected" type="button" class="filter-button" data-filter="uncollected">Uncollected</button>
               </div>
+              <div class="manage-filter" role="tablist" aria-label="Inventory layout">
+                <button id="layout-cards" type="button" class="filter-button is-active" data-layout="cards">Cards</button>
+                <button id="layout-compact" type="button" class="filter-button" data-layout="compact">Compact</button>
+              </div>
               <button id="open-items-csv" type="button" class="ghost-button" disabled>Open Native CSV</button>
             </div>
           </div>
           <div id="manage-list" class="manage-list empty-state">Select a project to manage its collected items.</div>
-        </section>
-
-        <section id="projects-view" class="projects-view app-view" hidden>
-          <div class="projects-stage">
-            <article class="projects-card projects-card-primary">
-              <h2>Current Project</h2>
-              <div id="projects-focus" class="projects-focus empty-state">Select a library to see its working summary.</div>
-            </article>
-            <article class="projects-card">
-              <h2>Library Flow</h2>
-              <div id="projects-workflow" class="projects-workflow"></div>
-            </article>
-            <article class="projects-card projects-card-muted">
-              <h2>Recent Activity</h2>
-              <div id="projects-activity" class="projects-activity empty-state">Collected and ignored records will appear here.</div>
-            </article>
-          </div>
         </section>
 
         <section id="plugins-view" class="plugins-view app-view" hidden>
@@ -216,6 +211,41 @@
           </form>
           <pre id="debug-output" class="debug-output">Terminal output will appear here.</pre>
         </section>
+
+        <div id="image-lightbox" class="image-lightbox" hidden>
+          <div id="image-lightbox-backdrop" class="image-lightbox-backdrop"></div>
+          <figure class="image-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Image preview">
+            <button id="image-lightbox-close" type="button" class="image-lightbox-close" aria-label="Close image preview">Close</button>
+            <img id="image-lightbox-img" src="" alt="">
+            <figcaption id="image-lightbox-caption" class="image-lightbox-caption"></figcaption>
+          </figure>
+        </div>
+
+        <div id="project-context-menu" class="project-context-menu" hidden>
+          <button id="project-context-hide" type="button" class="project-context-item">Close Library</button>
+        </div>
+
+        <div id="project-dialog" class="project-dialog" hidden>
+          <div id="project-dialog-backdrop" class="project-dialog-backdrop"></div>
+          <form id="project-dialog-form" class="project-dialog-card">
+            <div class="section-title-row">
+              <h2>New Library</h2>
+            </div>
+            <label class="project-dialog-label" for="project-dialog-name">Library name</label>
+            <input id="project-dialog-name" name="project-dialog-name" type="text" placeholder="Harvey irrigation" autocomplete="off">
+            <div class="project-dialog-location">
+              <div>
+                <div class="project-dialog-label">Create folder in</div>
+                <div id="project-dialog-location" class="message-text">This workspace by default.</div>
+              </div>
+              <button id="project-dialog-choose-location" type="button" class="ghost-button">Choose Location</button>
+            </div>
+            <div class="project-dialog-actions">
+              <button id="project-dialog-cancel" type="button" class="ghost-button">Cancel</button>
+              <button type="submit" class="primary-action">Create Library</button>
+            </div>
+          </form>
+        </div>
       </main>
     </div>
     <template id="project-card-template">
@@ -225,33 +255,9 @@
       </button>
     </template>
 
-    <template id="recent-item-template">
-      <article class="recent-item">
-        <div class="recent-item-main">
-          <div class="recent-top">
-            <span class="recent-type"></span>
-            <span class="recent-source"></span>
-          </div>
-          <strong class="recent-title"></strong>
-          <span class="recent-meta"></span>
-        </div>
-        <div class="recent-actions">
-          <button type="button" class="ghost-button recent-open-app">Open In App</button>
-          <button type="button" class="ghost-button recent-open-file">Open Native File</button>
-        </div>
-      </article>
-    </template>
-
     <template id="manage-item-template">
       <article class="manage-item">
         <div class="manage-item-main">
-          <div class="manage-item-top">
-            <span class="manage-item-status"></span>
-            <span class="manage-item-type"></span>
-            <span class="manage-item-source"></span>
-          </div>
-          <strong class="manage-item-title"></strong>
-          <div class="manage-item-meta"></div>
           <div class="manage-item-preview">
             <div class="manage-item-image-wrap" hidden>
               <img class="manage-item-image" alt="">

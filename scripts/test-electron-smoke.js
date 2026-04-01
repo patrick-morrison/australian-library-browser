@@ -17,8 +17,21 @@ function slugify(value) {
 async function main() {
   const electronBinary = require("electron");
   const projectName = `Playwright Smoke ${Date.now()}`;
-  const projectFolder = path.join(repoRoot, `${slugify(projectName)}.trovelibrary`);
+  const projectFolderName = slugify(projectName);
+  const projectFolder = path.join(repoRoot, projectFolderName);
   let app;
+
+  async function navigate(page, targetUrl) {
+    await page.evaluate((url) => {
+      const input = document.querySelector("#address-input");
+      const form = document.querySelector("#address-form");
+      if (!(input instanceof HTMLInputElement) || !(form instanceof HTMLFormElement)) {
+        throw new Error("Address form is unavailable.");
+      }
+      input.value = url;
+      form.requestSubmit();
+    }, targetUrl);
+  }
 
   try {
     app = await electron.launch({
@@ -32,37 +45,54 @@ async function main() {
     });
 
     const page = await app.firstWindow();
-    await page.waitForSelector("#mode-projects");
-    await page.click("#mode-projects");
-    await page.fill("#project-name", projectName);
-    await page.press("#project-name", "Enter");
+    await page.waitForSelector("#mode-manage");
+    await page.click("#mode-manage");
+    await page.click("#new-project-button");
+    await page.waitForSelector("#project-dialog:not([hidden])");
+    await page.fill("#project-dialog-name", projectName);
+    await page.click("#project-dialog-form .primary-action");
     await page.waitForSelector("#capture-panel");
+    await page.waitForFunction(() => document.querySelector(".app-shell")?.classList.contains("mode-collect"), null, {
+      timeout: 20000
+    });
     await page.waitForFunction(
-      (name) => {
-        return Array.from(document.querySelectorAll(".project-card .project-name")).some((node) => node.textContent.includes(name));
+      (folderName) => {
+        return Array.from(document.querySelectorAll(".project-card .project-name")).some((node) =>
+          node.textContent.includes(folderName)
+        );
       },
-      projectName,
+      projectFolderName,
       { timeout: 20000 }
     );
 
-    await page.fill("#address-input", "https://example.com/");
-    await page.press("#address-input", "Enter");
+    await navigate(page, "https://example.com/");
     await page.waitForFunction(() => {
       const text = document.querySelector("#capture-empty")?.textContent || "";
       return text.includes("not supported") || text.includes("Browse normally");
     }, null, { timeout: 20000 });
 
-    await page.fill("#address-input", "https://trove.nla.gov.au/newspaper/article/58768300");
-    await page.press("#address-input", "Enter");
+    await navigate(page, "https://trove.nla.gov.au/newspaper/article/58768300");
     await page.waitForFunction(() => !document.querySelector("#capture-body")?.hasAttribute("hidden"), null, { timeout: 45000 });
     await page.waitForFunction(() => {
       const markdown = document.querySelector("#capture-markdown")?.textContent || "";
       return markdown.includes("Link: https://trove.nla.gov.au/newspaper/article/58768300");
     }, null, { timeout: 15000 });
 
-    await page.click("#debug-toggle");
+    await page.evaluate(() => {
+      const button = document.querySelector("#debug-toggle");
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("Debug button is unavailable.");
+      }
+      button.click();
+    });
     await page.waitForSelector("#debug-drawer:not([hidden])");
-    await page.click("#debug-close");
+    await page.evaluate(() => {
+      const button = document.querySelector("#debug-close");
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("Debug close button is unavailable.");
+      }
+      button.click();
+    });
     await page.waitForFunction(() => document.querySelector("#debug-drawer")?.hasAttribute("hidden"), null, { timeout: 10000 });
 
     console.log("Electron smoke test passed.");

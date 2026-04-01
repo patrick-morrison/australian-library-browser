@@ -24,8 +24,8 @@ async function main() {
 
   try {
     const page = await app.firstWindow();
-    await page.waitForSelector("#mode-projects");
-    await page.click("#mode-projects");
+    await page.waitForSelector("#mode-manage");
+    await page.click("#mode-manage");
     await page.fill("#project-name", `Inline Debug ${Date.now()}`);
     await page.press("#project-name", "Enter");
     await page.waitForSelector("#capture-panel");

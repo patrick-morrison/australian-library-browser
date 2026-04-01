@@ -4,45 +4,56 @@ const WEBVIEW_PARTITION = "persist:trove-library";
 const state = {
   projects: [],
   activeProjectPath: "",
+  projectContextPath: "",
   tabs: [],
   activeTabId: "",
   plugins: sourceRegistry.listPlugins(),
   selectedProjectDirectory: "",
+  projectSearches: [],
+  savedSearchMenuOpen: false,
   mode: "collect",
   manageFilter: "all",
   manageQuery: "",
+  manageLayout: "cards",
+  manageExpandedKey: "",
   debugOpen: false,
   captureRequestId: 0,
   sidebarWidth: 360,
-  manageRenderToken: 0
+  manageRenderToken: 0,
+  captureBusy: null,
+  saveProgress: null
 };
 
 const elements = {
-  projectForm: document.getElementById("project-form"),
-  projectNameInput: document.getElementById("project-name"),
-  chooseProjectLocation: document.getElementById("choose-project-location"),
-  projectLocation: document.getElementById("project-location"),
+  newProjectButton: document.getElementById("new-project-button"),
+  openProjectButton: document.getElementById("open-project-button"),
+  projectDialog: document.getElementById("project-dialog"),
+  projectDialogBackdrop: document.getElementById("project-dialog-backdrop"),
+  projectDialogForm: document.getElementById("project-dialog-form"),
+  projectDialogName: document.getElementById("project-dialog-name"),
+  projectDialogLocation: document.getElementById("project-dialog-location"),
+  projectDialogChooseLocation: document.getElementById("project-dialog-choose-location"),
+  projectDialogCancel: document.getElementById("project-dialog-cancel"),
   modeCollect: document.getElementById("mode-collect"),
   modeManage: document.getElementById("mode-manage"),
-  modeProjects: document.getElementById("mode-projects"),
   modePlugins: document.getElementById("mode-plugins"),
   projectCount: document.getElementById("project-count"),
   projectList: document.getElementById("project-list"),
+  projectContextMenu: document.getElementById("project-context-menu"),
+  projectContextHide: document.getElementById("project-context-hide"),
   projectDetails: document.getElementById("project-details"),
-  recentSaves: document.getElementById("recent-saves"),
+  savedSearches: document.getElementById("saved-searches"),
   sourceList: document.getElementById("source-list"),
-  projectsFocus: document.getElementById("projects-focus"),
-  projectsWorkflow: document.getElementById("projects-workflow"),
-  projectsActivity: document.getElementById("projects-activity"),
   pluginsSupported: document.getElementById("plugins-supported"),
   openProjectFolder: document.getElementById("open-project-folder"),
+  openSearchesFolder: document.getElementById("open-searches-folder"),
+  closeProjectButton: document.getElementById("close-project-button"),
   sidebarResizer: document.getElementById("sidebar-resizer"),
   addressForm: document.getElementById("address-form"),
   addressInput: document.getElementById("address-input"),
   tabs: document.getElementById("tabs"),
   collectView: document.getElementById("collect-view"),
   manageView: document.getElementById("manage-view"),
-  projectsView: document.getElementById("projects-view"),
   pluginsView: document.getElementById("plugins-view"),
   manageSummary: document.getElementById("manage-summary"),
   manageList: document.getElementById("manage-list"),
@@ -51,11 +62,16 @@ const elements = {
   filterSaved: document.getElementById("filter-saved"),
   filterIgnored: document.getElementById("filter-ignored"),
   filterUncollected: document.getElementById("filter-uncollected"),
+  layoutCards: document.getElementById("layout-cards"),
+  layoutCompact: document.getElementById("layout-compact"),
   openItemsCsv: document.getElementById("open-items-csv"),
   webviewStack: document.getElementById("webview-stack"),
   backButton: document.getElementById("back-button"),
   forwardButton: document.getElementById("forward-button"),
   reloadButton: document.getElementById("reload-button"),
+  saveSearchButton: document.getElementById("save-search-button"),
+  savedSearchesButton: document.getElementById("saved-searches-button"),
+  savedSearchesMenu: document.getElementById("saved-searches-menu"),
   newTabButton: document.getElementById("new-tab-button"),
   debugToggle: document.getElementById("debug-toggle"),
   pageStatus: document.getElementById("page-status"),
@@ -64,13 +80,18 @@ const elements = {
   capturePanel: document.getElementById("capture-panel"),
   captureEmpty: document.getElementById("capture-empty"),
   captureBody: document.getElementById("capture-body"),
-  captureState: document.getElementById("capture-state"),
   captureOpenPage: document.getElementById("capture-open-page"),
   captureIgnore: document.getElementById("capture-ignore"),
   captureCollect: document.getElementById("capture-collect"),
+  captureProgress: document.getElementById("capture-progress"),
   captureImageSection: document.getElementById("capture-image-section"),
   captureImageGallery: document.getElementById("capture-image-gallery"),
   captureMarkdown: document.getElementById("capture-markdown"),
+  imageLightbox: document.getElementById("image-lightbox"),
+  imageLightboxBackdrop: document.getElementById("image-lightbox-backdrop"),
+  imageLightboxClose: document.getElementById("image-lightbox-close"),
+  imageLightboxImg: document.getElementById("image-lightbox-img"),
+  imageLightboxCaption: document.getElementById("image-lightbox-caption"),
   pluginSeedUrls: document.getElementById("plugin-seed-urls"),
   pluginCopyPrompt: document.getElementById("plugin-copy-prompt"),
   pluginCopyProbeCommand: document.getElementById("plugin-copy-probe-command"),
@@ -86,7 +107,6 @@ const elements = {
   debugOutput: document.getElementById("debug-output"),
   debugCwd: document.getElementById("debug-cwd"),
   projectCardTemplate: document.getElementById("project-card-template"),
-  recentItemTemplate: document.getElementById("recent-item-template"),
   manageItemTemplate: document.getElementById("manage-item-template")
 };
 
@@ -183,6 +203,193 @@ function getActiveProject() {
   return state.projects.find((project) => project.path === state.activeProjectPath) || null;
 }
 
+function renderProjectDialogLocation() {
+  elements.projectDialogLocation.textContent = state.selectedProjectDirectory
+    ? state.selectedProjectDirectory
+    : "This workspace by default.";
+}
+
+function openProjectDialog() {
+  renderProjectDialogLocation();
+  elements.projectDialog.hidden = false;
+  elements.projectDialogName.value = "";
+  queueMicrotask(() => elements.projectDialogName.focus());
+}
+
+function closeProjectDialog() {
+  elements.projectDialog.hidden = true;
+  elements.projectDialogName.value = "";
+}
+
+async function refreshProjectSearches(project = getActiveProject()) {
+  if (!project) {
+    state.projectSearches = [];
+    renderSavedSearchMenu();
+    updateNavigationButtons();
+    return;
+  }
+  state.projectSearches = await window.troveApi.listSearchExports(project.path);
+  renderSavedSearchMenu();
+  updateNavigationButtons();
+}
+
+function renderSavedSearches() {
+  const project = getActiveProject();
+  const searches = state.projectSearches || [];
+  if (!elements.savedSearches || !elements.openSearchesFolder) {
+    return;
+  }
+  elements.openSearchesFolder.disabled = !project;
+
+  if (!project) {
+    elements.savedSearches.className = "saved-searches empty-state";
+    elements.savedSearches.textContent = "Select a project to see its saved searches.";
+    return;
+  }
+
+  if (!searches.length) {
+    elements.savedSearches.className = "saved-searches empty-state";
+    elements.savedSearches.textContent = "No saved searches yet. Use Save Search while browsing result pages.";
+    return;
+  }
+
+  const renderRow = (search) => `
+    <button type="button" class="saved-search-item" data-search-path="${escapeHtml(search.path)}" data-search-url="${escapeHtml(search.url || "")}">
+      <strong>${escapeHtml(search.label || search.name.replace(/\.url\.txt$/i, "").replace(/\.csv$/i, ""))}</strong>
+      <span class="saved-search-meta">${escapeHtml(formatDate(search.modifiedAt))}</span>
+    </button>
+  `;
+
+  elements.savedSearches.className = "saved-searches";
+  elements.savedSearches.innerHTML = searches.slice(0, 6).map(renderRow).join("");
+
+  for (const container of [elements.savedSearches]) {
+    container.querySelectorAll("[data-search-path]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const url = button.getAttribute("data-search-url") || "";
+        if (url) {
+          const activeTab = getActiveTab();
+          setMode("collect");
+          if (activeTab) {
+            activeTab.webview.loadURL(url);
+          } else {
+            createTab(url);
+          }
+          return;
+        }
+        void window.troveApi.openPath(button.getAttribute("data-search-path") || "");
+      });
+    });
+  }
+}
+
+function closeSavedSearchMenu() {
+  state.savedSearchMenuOpen = false;
+  elements.savedSearchesMenu.hidden = true;
+  elements.savedSearchesButton.setAttribute("aria-expanded", "false");
+}
+
+function openSavedSearchUrl(url) {
+  if (!url) {
+    return;
+  }
+  const activeTab = getActiveTab();
+  setMode("collect");
+  if (activeTab) {
+    activeTab.webview.loadURL(url);
+  } else {
+    createTab(url);
+  }
+}
+
+async function deleteSavedSearch(searchPath, searchName) {
+  const project = getActiveProject();
+  if (!project) {
+    return;
+  }
+  const confirmed = window.confirm(`Delete this saved search?\n\n${searchName}`);
+  if (!confirmed) {
+    return;
+  }
+  await window.troveApi.deleteSearchExport(project.path, searchPath);
+  await refreshProjectSearches(project);
+  renderSavedSearches();
+  renderSavedSearchMenu();
+  setMessage(`Deleted saved search ${searchName}.`);
+}
+
+function renderSavedSearchMenu() {
+  const project = getActiveProject();
+  const searches = state.projectSearches || [];
+  if (!elements.savedSearchesMenu || !elements.savedSearchesButton) {
+    return;
+  }
+
+  elements.savedSearchesButton.disabled = !project || !searches.length;
+  elements.savedSearchesButton.textContent = searches.length ? `Saved Searches (${searches.length})` : "Saved Searches";
+
+  if (!project) {
+    elements.savedSearchesMenu.innerHTML = '<div class="saved-searches-menu-empty">Select a library first.</div>';
+    closeSavedSearchMenu();
+    return;
+  }
+
+  if (!searches.length) {
+    elements.savedSearchesMenu.innerHTML = '<div class="saved-searches-menu-empty">No saved searches yet.</div>';
+    closeSavedSearchMenu();
+    return;
+  }
+
+  elements.savedSearchesMenu.innerHTML = searches
+    .map(
+      (search) => `
+        <div class="saved-searches-menu-row">
+          <button type="button" class="saved-searches-menu-open" data-search-url="${escapeHtml(search.url || "")}" data-search-path="${escapeHtml(search.path)}">
+            <span class="saved-searches-menu-main">
+              <strong>${escapeHtml(search.label || search.name.replace(/\.url\.txt$/i, "").replace(/\.csv$/i, ""))}</strong>
+              <span class="saved-searches-menu-url">${escapeHtml(formatSavedSearchUrl(search.url || ""))}</span>
+            </span>
+            <span class="saved-searches-menu-meta">${escapeHtml(formatDate(search.modifiedAt))}</span>
+          </button>
+          <button
+            type="button"
+            class="saved-searches-menu-delete"
+            data-search-delete="${escapeHtml(search.path)}"
+            data-search-name="${escapeHtml(search.label || search.name.replace(/\.url\.txt$/i, "").replace(/\.csv$/i, ""))}"
+            aria-label="Delete saved search ${escapeHtml(search.name)}"
+          >
+            Delete
+          </button>
+        </div>
+      `
+    )
+    .join("");
+
+  elements.savedSearchesMenu.querySelectorAll("[data-search-url]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closeSavedSearchMenu();
+      const url = button.getAttribute("data-search-url") || "";
+      if (url) {
+        openSavedSearchUrl(url);
+        return;
+      }
+      void window.troveApi.openPath(button.getAttribute("data-search-path") || "");
+    });
+  });
+
+  elements.savedSearchesMenu.querySelectorAll("[data-search-delete]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const searchPath = button.getAttribute("data-search-delete") || "";
+      const searchName = button.getAttribute("data-search-name") || "saved search";
+      void deleteSavedSearch(searchPath, searchName);
+    });
+  });
+
+  elements.savedSearchesMenu.hidden = !state.savedSearchMenuOpen;
+  elements.savedSearchesButton.setAttribute("aria-expanded", state.savedSearchMenuOpen ? "true" : "false");
+}
+
 function getActiveTab() {
   return state.tabs.find((tab) => tab.id === state.activeTabId) || null;
 }
@@ -224,8 +431,150 @@ function formatDate(value) {
   }
 }
 
+function formatSavedSearchUrl(value) {
+  if (!value) {
+    return "";
+  }
+  try {
+    const url = new URL(value);
+    return url.search ? url.search.slice(1) : `${url.pathname}${url.search}`;
+  } catch {
+    const text = String(value).trim();
+    const index = text.indexOf("?");
+    return index >= 0 ? text.slice(index + 1) : text;
+  }
+}
+
+function normalizeComparableUrl(value) {
+  if (!value) {
+    return "";
+  }
+  try {
+    const url = new URL(String(value).trim());
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return String(value).trim();
+  }
+}
+
+function isCurrentPageAlreadySavedSearch() {
+  const activeTab = getActiveTab();
+  const project = getActiveProject();
+  if (!activeTab?.url || !project) {
+    return false;
+  }
+  const currentUrl = normalizeComparableUrl(activeTab.url);
+  return (state.projectSearches || []).some((search) => normalizeComparableUrl(search.url) === currentUrl);
+}
+
+function isKnownCollectionHost(hostname) {
+  return [
+    "trove.nla.gov.au",
+    "catalogue.slwa.wa.gov.au",
+    "encore.slwa.wa.gov.au",
+    "purl.slwa.wa.gov.au",
+    "museum.wa.gov.au"
+  ].includes(String(hostname || "").toLowerCase());
+}
+
 function setMessage(text) {
   elements.message.textContent = text;
+}
+
+function acknowledgeButtonPress(target) {
+  if (!(target instanceof HTMLElement) || target.matches(":disabled, [aria-disabled='true']")) {
+    return;
+  }
+  if (target.__troveAckTimer) {
+    clearTimeout(target.__troveAckTimer);
+  }
+  target.classList.remove("is-acknowledged");
+  target.getBoundingClientRect();
+  target.classList.add("is-acknowledged");
+  target.__troveAckTimer = setTimeout(() => {
+    target.classList.remove("is-acknowledged");
+    target.__troveAckTimer = null;
+  }, 180);
+}
+
+function describeBusyAction(action) {
+  if (action === "preview") {
+    return "Previewing";
+  }
+  if (action === "collect") {
+    return "Collecting";
+  }
+  if (action === "ignore") {
+    return "Ignoring";
+  }
+  if (action === "unignore") {
+    return "Unignoring";
+  }
+  if (action === "uncollect") {
+    return "Removing";
+  }
+  return "Working";
+}
+
+function formatSaveProgressLabel(progress) {
+  if (!progress?.total || progress.total <= 1) {
+    return "";
+  }
+  const current = Math.max(0, Number(progress.current) || 0);
+  const total = Math.max(0, Number(progress.total) || 0);
+  if (progress.phase === "complete" || progress.phase === "saved") {
+    return `Collected ${current}/${total} images`;
+  }
+  if (progress.phase === "skipped") {
+    return `Skipping broken image ${current}/${total}`;
+  }
+  return `Collecting image ${Math.min(current, total)}/${total}`;
+}
+
+function setButtonLoading(button, isLoading, label) {
+  if (!button) {
+    return;
+  }
+  if (!button.dataset.baseLabel) {
+    button.dataset.baseLabel = button.textContent || "";
+  }
+  if (isLoading) {
+    button.classList.add("is-loading");
+    button.setAttribute("aria-busy", "true");
+    button.textContent = label;
+    return;
+  }
+  button.classList.remove("is-loading");
+  button.removeAttribute("aria-busy");
+  if (button.dataset.baseLabel) {
+    button.textContent = button.dataset.baseLabel;
+  }
+}
+
+function setCaptureBusy(action, active, item = getDisplayedItem(), progressLabel = "") {
+  state.captureBusy = active ? { action, key: item?.key || "", url: item?.url || "", progressLabel } : null;
+  if (!active) {
+    setButtonLoading(elements.captureCollect, false);
+    setButtonLoading(elements.captureIgnore, false);
+    elements.captureProgress.hidden = true;
+    elements.captureProgress.textContent = "";
+    return;
+  }
+  elements.captureProgress.textContent = progressLabel || "";
+  elements.captureProgress.hidden = !progressLabel;
+  if (action === "preview") {
+    return;
+  }
+  if (action === "collect" || action === "uncollect") {
+    setButtonLoading(elements.captureCollect, true, progressLabel || `${describeBusyAction(action)}…`);
+    elements.captureIgnore.disabled = true;
+    return;
+  }
+  if (action === "ignore" || action === "unignore") {
+    setButtonLoading(elements.captureIgnore, true, `${describeBusyAction(action)}…`);
+    elements.captureCollect.disabled = true;
+  }
 }
 
 function getCaptureContext() {
@@ -319,42 +668,66 @@ function hasInlinePreviewForActiveTab() {
 }
 
 function resetCapturePane(message, kind = "Preview") {
+  closeImageLightbox();
   elements.captureEmpty.textContent = message;
+  elements.captureEmpty.classList.toggle("is-loading", kind === "Loading");
   elements.captureBody.hidden = true;
   elements.captureEmpty.hidden = false;
+  setCaptureBusy("", false);
   elements.captureIgnore.disabled = true;
   elements.captureCollect.disabled = true;
   elements.captureOpenPage.disabled = true;
-  elements.captureState.hidden = true;
-  elements.captureState.textContent = "";
-  elements.captureState.className = "capture-state";
   elements.captureImageSection.hidden = true;
   elements.captureImageGallery.innerHTML = "";
   elements.captureMarkdown.textContent = "";
+  elements.captureProgress.hidden = true;
+  elements.captureProgress.textContent = "";
 }
 
 function renderCapturePane(item, markdown, options = {}) {
   const project = getActiveProject();
   const status = options.forcedStatus || sourceRegistry.itemStatus(project, item);
-  elements.captureState.hidden = !status;
-  elements.captureState.textContent = status === "saved" ? "Collected" : "Ignored";
-  elements.captureState.className = "capture-state";
-  if (status === "saved") {
-    elements.captureState.classList.add("item-state-saved");
-  } else if (status === "ignored") {
-    elements.captureState.classList.add("item-state-ignored");
-  }
+  const busy = state.captureBusy;
+  const progress = state.saveProgress;
+  const itemMatchesBusy =
+    Boolean(
+      busy &&
+        item &&
+        ((busy.key && item.key && busy.key === item.key) || (busy.url && item.url && busy.url === item.url))
+    );
   elements.captureOpenPage.disabled = !item.url;
-  elements.captureIgnore.disabled = !project;
-  elements.captureCollect.disabled = !project;
+  elements.captureIgnore.disabled = !project || status === "saved" || itemMatchesBusy;
+  elements.captureCollect.disabled = !project || itemMatchesBusy;
   const attachments = getItemAttachments(item);
   const isImageSet = item.type === "image" && attachments.length > 1;
-  elements.captureCollect.textContent =
-    status === "saved" ? "Collected" : isImageSet ? `Collect All (${attachments.length})` : "Collect";
-  elements.captureIgnore.textContent = status === "ignored" ? "Unignore" : "Ignore";
+  const collectLabel = status === "saved" ? "Collected" : isImageSet ? `Collect All (${attachments.length})` : "Collect";
+  const ignoreLabel = status === "ignored" ? "Unignore" : "Ignore";
+  elements.captureCollect.dataset.baseLabel = collectLabel;
+  elements.captureIgnore.dataset.baseLabel = ignoreLabel;
+  elements.captureCollect.textContent = collectLabel;
+  elements.captureIgnore.textContent = ignoreLabel;
   elements.captureCollect.classList.toggle("is-complete", status === "saved");
   elements.captureIgnore.classList.toggle("is-complete", status === "ignored");
   elements.captureIgnore.classList.toggle("is-ignored-state", status === "ignored");
+  const progressMatchesItem =
+    Boolean(
+      progress &&
+        item &&
+        ((progress.key && item.key && progress.key === item.key) || (progress.url && item.url && progress.url === item.url))
+    );
+  const progressLabel = progressMatchesItem ? formatSaveProgressLabel(progress) : "";
+  setButtonLoading(
+    elements.captureCollect,
+    Boolean(itemMatchesBusy && (busy.action === "collect" || busy.action === "uncollect")),
+    progressLabel || busy?.progressLabel || `${describeBusyAction(busy?.action)}…`
+  );
+  setButtonLoading(
+    elements.captureIgnore,
+    Boolean(itemMatchesBusy && (busy.action === "ignore" || busy.action === "unignore")),
+    `${describeBusyAction(busy?.action)}…`
+  );
+  elements.captureProgress.textContent = progressLabel;
+  elements.captureProgress.hidden = !progressLabel;
   const showImage = item.type === "image" && attachments.length > 0;
   elements.captureImageSection.hidden = !showImage;
   if (showImage) {
@@ -362,7 +735,6 @@ function renderCapturePane(item, markdown, options = {}) {
     const selected = attachments[selectedIndex] || attachments[0];
     const mainSrc = escapeHtml(selected.imageUrl || selected.thumbnailUrl || "");
     const mainTitle = escapeHtml(selected.title || item.title || `Image ${selectedIndex + 1}`);
-    const mainHref = escapeHtml(selected.viewerUrl || item.url || "");
     const thumbs =
       attachments.length > 1
         ? `<div class="capture-thumbnail-strip">${attachments
@@ -378,9 +750,9 @@ function renderCapturePane(item, markdown, options = {}) {
         : "";
     elements.captureImageGallery.innerHTML = `
       <figure class="capture-gallery-item capture-gallery-primary">
-        ${mainHref ? `<a href="${mainHref}" class="capture-gallery-link" data-open-external="${mainHref}">` : ""}
-        <img src="${mainSrc}" alt="${mainTitle}">
-        ${mainHref ? "</a>" : ""}
+        <button type="button" class="capture-gallery-link" data-open-image-lightbox="${mainSrc}" data-image-caption="${mainTitle}" aria-label="Open larger preview for ${mainTitle}">
+          <img src="${mainSrc}" alt="${mainTitle}">
+        </button>
         <figcaption>${mainTitle}</figcaption>
       </figure>
       ${thumbs}
@@ -389,6 +761,7 @@ function renderCapturePane(item, markdown, options = {}) {
     elements.captureImageGallery.innerHTML = "";
   }
   elements.captureMarkdown.innerHTML = renderMarkdownHtml(markdown);
+  elements.captureEmpty.classList.remove("is-loading");
   elements.captureEmpty.hidden = true;
   elements.captureBody.hidden = false;
 }
@@ -406,10 +779,50 @@ async function applyImmediatePageFeedback(item, status) {
   await activeTab.webview.executeJavaScript(script, true).catch(() => {});
 }
 
-function renderProjectLocation() {
-  elements.projectLocation.textContent = state.selectedProjectDirectory
-    ? `New libraries will be created in ${state.selectedProjectDirectory}`
-    : "Saving new libraries in this workspace by default.";
+async function applyImmediatePageLoading(item, action, active, label = "") {
+  const activeTab = getActiveTab();
+  if (!activeTab?.webview?.isConnected || !item) {
+    return;
+  }
+  const urls = [...new Set([item.url, ...(item.aliases || [])].filter(Boolean))];
+  if (!urls.length) {
+    return;
+  }
+  const script = sourceRegistry.buildImmediateLoadingScript({ action, active, label, urls });
+  await activeTab.webview.executeJavaScript(script, true).catch(() => {});
+}
+
+async function handleSaveProgress(progress) {
+  state.saveProgress = progress || null;
+  const displayedItem = getDisplayedItem();
+  if (displayedItem) {
+    renderCapturePane(displayedItem, getDisplayedMarkdown(), { origin: previewState.origin });
+  }
+  if (progress?.url || (Array.isArray(progress?.aliases) && progress.aliases.length)) {
+    const progressItem = {
+      url: progress.url || "",
+      aliases: Array.isArray(progress.aliases) ? progress.aliases : []
+    };
+    await applyImmediatePageLoading(progressItem, "collect", progress?.phase !== "complete", formatSaveProgressLabel(progress));
+  }
+}
+
+function openImageLightbox(src, caption = "") {
+  if (!src) {
+    return;
+  }
+  elements.imageLightboxImg.src = src;
+  elements.imageLightboxImg.alt = caption || "Preview image";
+  elements.imageLightboxCaption.textContent = caption || "";
+  elements.imageLightbox.hidden = false;
+  elements.imageLightboxClose.focus();
+}
+
+function closeImageLightbox() {
+  elements.imageLightbox.hidden = true;
+  elements.imageLightboxImg.src = "";
+  elements.imageLightboxImg.alt = "";
+  elements.imageLightboxCaption.textContent = "";
 }
 
 function formatItemType(type) {
@@ -504,6 +917,23 @@ function getManageItemImageSource(item) {
   return item.imageUrl || (Array.isArray(item.imageUrls) ? item.imageUrls.find(Boolean) : "") || "";
 }
 
+function getInventoryItemKey(item) {
+  return String(item?.key || [item?.status || "", item?.source || "", item?.type || "", item?.id || item?.url || item?.title || ""].join(":"));
+}
+
+function formatInventoryStatus(status) {
+  if (status === "saved") {
+    return "Collected";
+  }
+  if (status === "ignored") {
+    return "Ignored";
+  }
+  if (status === "uncollected") {
+    return "Uncollected";
+  }
+  return "Item";
+}
+
 async function populateManageCard(card, project, item, renderToken) {
   const imageWrap = card.querySelector(".manage-item-image-wrap");
   const imageNode = card.querySelector(".manage-item-image");
@@ -514,10 +944,16 @@ async function populateManageCard(card, project, item, renderToken) {
     imageWrap.hidden = false;
     imageNode.src = imageSource;
     imageNode.alt = item.title || "";
+    imageWrap.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openImageLightbox(imageSource, item.title || "");
+    };
   } else {
     imageWrap.hidden = true;
     imageNode.removeAttribute("src");
     imageNode.alt = "";
+    imageWrap.onclick = null;
   }
 
   try {
@@ -532,6 +968,93 @@ async function populateManageCard(card, project, item, renderToken) {
     }
     markdownNode.textContent = "Markdown preview unavailable.";
   }
+}
+
+function bindManageCardActions(card, project, item) {
+  const localTargets = resolveItemLocalTargets(project, item);
+  const openPage = card.querySelector(".manage-open-page");
+  const openFile = card.querySelector(".manage-open-file");
+  if (openPage) {
+    openPage.addEventListener("click", () => {
+      void openItemInApp(item);
+    });
+  }
+  if (openFile) {
+    openFile.disabled = !localTargets.length;
+    openFile.addEventListener("click", async () => {
+      if (!localTargets.length) {
+        return;
+      }
+      await window.troveApi.openPath(localTargets[0]);
+    });
+  }
+}
+
+async function renderManageCompactList(project, inventory, renderToken) {
+  const activeExpandedKey = inventory.some((item) => getInventoryItemKey(item) === state.manageExpandedKey)
+    ? state.manageExpandedKey
+    : "";
+  state.manageExpandedKey = activeExpandedKey;
+
+  const table = document.createElement("div");
+  table.className = "manage-table";
+  table.innerHTML = `
+    <div class="manage-table-head">
+      <span>Title</span>
+      <span>Source</span>
+      <span>Status</span>
+      <span>Updated</span>
+    </div>
+  `;
+
+  for (const item of inventory) {
+    const itemKey = getInventoryItemKey(item);
+    const row = document.createElement("section");
+    row.className = "manage-row";
+    row.dataset.itemKey = itemKey;
+    row.classList.toggle("is-expanded", itemKey === activeExpandedKey);
+    row.classList.toggle("is-ignored", item.status === "ignored");
+    row.classList.toggle("is-uncollected", item.status === "uncollected");
+
+    const title = escapeHtml(item.title || "Untitled item");
+    const source = escapeHtml(item.sourceLabel || item.source || "");
+    const status = escapeHtml(formatInventoryStatus(item.status));
+    const updated = escapeHtml(formatDate(item.timestamp || item.savedAt || item.ignoredAt || item.uncollectedAt || ""));
+
+    row.innerHTML = `
+      <button type="button" class="manage-row-toggle" aria-expanded="${itemKey === activeExpandedKey ? "true" : "false"}">
+        <span class="manage-row-title">${title}</span>
+        <span class="manage-row-source">${source}</span>
+        <span class="manage-row-status">${status}</span>
+        <span class="manage-row-date">${updated}</span>
+      </button>
+    `;
+
+    row.querySelector(".manage-row-toggle")?.addEventListener("click", () => {
+      state.manageExpandedKey = state.manageExpandedKey === itemKey ? "" : itemKey;
+      void renderManageList();
+    });
+
+    if (itemKey === activeExpandedKey) {
+      const detail = document.createElement("div");
+      detail.className = "manage-row-detail";
+      const fragment = elements.manageItemTemplate.content.cloneNode(true);
+      const card = fragment.querySelector(".manage-item");
+      card.classList.add("manage-item-detail");
+      card.classList.toggle("is-ignored", item.status === "ignored");
+      card.classList.toggle("is-uncollected", item.status === "uncollected");
+      bindManageCardActions(card, project, item);
+      detail.append(fragment);
+      row.append(detail);
+      table.append(row);
+      void populateManageCard(card, project, item, renderToken);
+      continue;
+    }
+
+    table.append(row);
+  }
+
+  elements.manageList.append(table);
 }
 
 async function openItemInApp(item) {
@@ -605,24 +1128,22 @@ function renderPluginIntake() {
 }
 
 function renderMode() {
-  document.querySelector(".app-shell")?.classList.remove("mode-collect", "mode-manage", "mode-projects", "mode-plugins");
+  document.querySelector(".app-shell")?.classList.remove("mode-collect", "mode-manage", "mode-plugins");
   document.querySelector(".app-shell")?.classList.add(`mode-${state.mode}`);
   elements.modeCollect.classList.toggle("is-active", state.mode === "collect");
   elements.modeManage.classList.toggle("is-active", state.mode === "manage");
-  elements.modeProjects.classList.toggle("is-active", state.mode === "projects");
   elements.modePlugins.classList.toggle("is-active", state.mode === "plugins");
   elements.collectView.hidden = state.mode !== "collect";
   elements.manageView.hidden = state.mode !== "manage";
-  elements.projectsView.hidden = state.mode !== "projects";
   elements.pluginsView.hidden = state.mode !== "plugins";
 }
 
 function setMode(mode) {
   state.mode = mode;
+  closeProjectContextMenu();
   renderMode();
   renderProjectDetails();
-  renderRecentSaves();
-  renderProjectsWorkspace();
+  renderSavedSearches();
   renderPluginIntake();
 }
 
@@ -1107,28 +1628,69 @@ function renderTabs() {
 function bindSidebarResizer() {
   const minWidth = 280;
   const maxWidth = 640;
+  let activePointerId = null;
+  let frame = 0;
+  let pendingWidth = 0;
+
+  const applyPendingWidth = () => {
+    frame = 0;
+    if (!pendingWidth) {
+      return;
+    }
+    state.sidebarWidth = pendingWidth;
+    applySidebarWidth();
+    syncWebviewElementSize();
+  };
+
   const onPointerMove = (event) => {
+    if (activePointerId !== event.pointerId) {
+      return;
+    }
     const shellRect = document.querySelector(".app-shell")?.getBoundingClientRect();
     if (!shellRect) {
       return;
     }
-    const nextWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(event.clientX - shellRect.left - 12)));
-    state.sidebarWidth = nextWidth;
-    applySidebarWidth();
-    syncWebviewElementSize();
+    pendingWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(event.clientX - shellRect.left - 12)));
+    if (!frame) {
+      frame = window.requestAnimationFrame(applyPendingWidth);
+    }
   };
+
   const stopDrag = () => {
+    if (frame) {
+      window.cancelAnimationFrame(frame);
+      frame = 0;
+    }
+    if (pendingWidth) {
+      state.sidebarWidth = pendingWidth;
+      applySidebarWidth();
+      syncWebviewElementSize();
+      pendingWidth = 0;
+    }
     document.body.classList.remove("is-resizing-sidebar");
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", stopDrag);
+    elements.sidebarResizer.classList.remove("is-dragging");
+    if (activePointerId !== null) {
+      try {
+        elements.sidebarResizer.releasePointerCapture(activePointerId);
+      } catch {
+        // Ignore browsers that already released the capture.
+      }
+    }
+    activePointerId = null;
   };
 
   elements.sidebarResizer.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    activePointerId = event.pointerId;
+    pendingWidth = 0;
     document.body.classList.add("is-resizing-sidebar");
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", stopDrag, { once: true });
+    elements.sidebarResizer.classList.add("is-dragging");
+    elements.sidebarResizer.setPointerCapture(event.pointerId);
   });
+  elements.sidebarResizer.addEventListener("pointermove", onPointerMove);
+  elements.sidebarResizer.addEventListener("pointerup", stopDrag);
+  elements.sidebarResizer.addEventListener("pointercancel", stopDrag);
+  elements.sidebarResizer.addEventListener("lostpointercapture", stopDrag);
 }
 
 function renderSources() {
@@ -1209,121 +1771,43 @@ function renderProjects() {
   elements.projectList.innerHTML = "";
 
   if (!state.projects.length) {
-    elements.projectList.innerHTML = '<div class="empty-state">No `.trovelibrary` folders found yet.</div>';
+    elements.projectList.innerHTML = '<div class="empty-state">No libraries found yet.</div>';
     return;
   }
 
   for (const project of state.projects) {
     const fragment = elements.projectCardTemplate.content.cloneNode(true);
     const button = fragment.querySelector(".project-card");
+    const textCount = project.counts.texts || project.counts.newspapers || 0;
+    const imageCount = project.counts.images || 0;
     button.classList.toggle("is-active", activeProject?.path === project.path);
-    fragment.querySelector(".project-name").textContent = project.name;
-    fragment.querySelector(".project-meta").textContent =
-      `${project.counts.texts || project.counts.newspapers} texts · ${project.counts.images} images · ${project.ignoredCount} ignored`;
+    fragment.querySelector(".project-name").textContent = project.folderName;
+    fragment.querySelector(".project-meta").textContent = `${textCount} articles · ${imageCount} images`;
+    button.title = "Click to open. Right-click to hide this library from the list.";
     button.addEventListener("click", async () => {
+      closeProjectContextMenu();
       state.activeProjectPath = project.path;
+      await refreshProjectSearches(project);
       renderProjects();
       renderProjectDetails();
-      renderRecentSaves();
-      renderProjectsWorkspace();
+      renderSavedSearches();
+      renderSavedSearchMenu();
       renderManageList();
       await applyProjectDecorations();
       await updateCaptureState();
     });
-    elements.projectList.append(fragment);
-  }
-}
-
-function renderProjectsWorkspace() {
-  const project = getActiveProject();
-  if (!elements.projectsFocus || !elements.projectsWorkflow || !elements.projectsActivity) {
-    return;
-  }
-
-  if (!project) {
-    elements.projectsFocus.className = "projects-focus empty-state";
-    elements.projectsFocus.textContent = "Select a library to see its working summary.";
-    elements.projectsWorkflow.innerHTML = `
-      <div class="workflow-step"><strong>1. Create</strong><span>Create a library in the sidebar.</span></div>
-      <div class="workflow-step"><strong>2. Collect</strong><span>Browse live sources and collect text and image records.</span></div>
-      <div class="workflow-step"><strong>3. Manage</strong><span>Review the project inventory and only reveal files when needed.</span></div>
-    `;
-    elements.projectsActivity.className = "projects-activity empty-state";
-    elements.projectsActivity.textContent = "Collected and ignored records will appear here.";
-    return;
-  }
-
-  elements.projectsFocus.className = "projects-focus";
-  const sourceBadges = Object.entries(project.sourceCounts || {})
-    .map(([source, count]) => `<span class="source-badge">${source.toUpperCase()} ${count}</span>`)
-    .join("");
-  elements.projectsFocus.innerHTML = `
-    <div class="projects-focus-head">
-      <div>
-        <strong>${project.name}</strong>
-        <div class="message-text">${project.folderName}</div>
-        <div class="message-text">${summarizeProjectRecordMix(project)}</div>
-      </div>
-      <div class="project-stats">
-        <div class="project-stat"><span>Texts</span><strong>${project.counts.texts || project.counts.newspapers || 0}</strong></div>
-        <div class="project-stat"><span>Images</span><strong>${project.counts.images || 0}</strong></div>
-        <div class="project-stat"><span>Ignored</span><strong>${project.ignoredCount || 0}</strong></div>
-        <div class="project-stat"><span>Uncollected</span><strong>${project.uncollectedCount || 0}</strong></div>
-      </div>
-    </div>
-    <div class="source-badges">${sourceBadges || '<span class="message-text">No sources saved yet.</span>'}</div>
-    <div class="projects-focus-actions">
-      <button type="button" class="primary-action projects-open-collect">Open Collect</button>
-      <button type="button" class="ghost-button projects-open-manage">Open Manage</button>
-      <button type="button" class="ghost-button projects-open-folder">Open Folder</button>
-      <button type="button" class="ghost-button projects-open-csv">Open Native CSV</button>
-    </div>
-  `;
-  elements.projectsFocus.querySelector(".projects-open-collect")?.addEventListener("click", () => setMode("collect"));
-  elements.projectsFocus.querySelector(".projects-open-manage")?.addEventListener("click", () => {
-    setMode("manage");
-    renderManageList();
-  });
-  elements.projectsFocus.querySelector(".projects-open-folder")?.addEventListener("click", () => {
-    void window.troveApi.openPath(project.path);
-  });
-  elements.projectsFocus.querySelector(".projects-open-csv")?.addEventListener("click", () => {
-    void window.troveApi.openPath(`${project.path}/items.csv`);
-  });
-
-  elements.projectsWorkflow.innerHTML = `
-    <div class="workflow-step"><strong>Collect</strong><span>Stay in the browser, preview the record, then collect or ignore it.</span></div>
-    <div class="workflow-step"><strong>Text And Image</strong><span>Articles and images are tracked together in one library and one CSV.</span></div>
-    <div class="workflow-step"><strong>Reveal Files Only When Needed</strong><span>Use in-app browsing first. Reveal markdown, sidecars, or binaries only when you need the raw files.</span></div>
-  `;
-
-  const activityItems = getProjectInventory(project).slice(0, 6);
-  if (!activityItems.length) {
-    elements.projectsActivity.className = "projects-activity empty-state";
-    elements.projectsActivity.textContent = "No project activity yet.";
-    return;
-  }
-  elements.projectsActivity.className = "projects-activity";
-  elements.projectsActivity.innerHTML = "";
-  for (const item of activityItems) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "projects-activity-item";
-    row.innerHTML = `
-      <span class="projects-activity-status ${item.status === "ignored" ? "is-ignored" : "is-saved"}">${item.status === "ignored" ? "Ignored" : formatItemTypeBadge(item.type)}</span>
-      <span class="projects-activity-title">${item.title}</span>
-      <span class="projects-activity-meta">${(item.sourceLabel || item.source || "Source").toUpperCase()} · ${formatDate(item.timestamp)}</span>
-    `;
-    row.addEventListener("click", () => {
-      void openItemInApp(item);
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openProjectContextMenu(event.clientX, event.clientY, project.path, button);
     });
-    elements.projectsActivity.append(row);
+    elements.projectList.append(fragment);
   }
 }
 
 function renderProjectDetails() {
   const project = getActiveProject();
   elements.openProjectFolder.disabled = !project;
+  elements.closeProjectButton.disabled = !project;
 
   if (!project) {
     elements.projectDetails.className = "project-details empty-state";
@@ -1335,8 +1819,7 @@ function renderProjectDetails() {
     elements.projectDetails.className = "project-details project-details-compact";
     elements.projectDetails.innerHTML = `
       <div>
-        <strong>${project.name}</strong>
-        <div class="message-text">${project.folderName}</div>
+        <strong>${project.folderName}</strong>
       </div>
     `;
     return;
@@ -1349,8 +1832,7 @@ function renderProjectDetails() {
   elements.projectDetails.className = "project-details";
   elements.projectDetails.innerHTML = `
     <div>
-      <strong>${project.name}</strong>
-      <div class="message-text">${project.folderName}</div>
+      <strong>${project.folderName}</strong>
     </div>
     <div class="project-stats">
       <div class="project-stat"><span>Texts</span><strong>${project.counts.texts || project.counts.newspapers}</strong></div>
@@ -1363,38 +1845,36 @@ function renderProjectDetails() {
   `;
 }
 
-function renderRecentSaves() {
-  const project = getActiveProject();
-  elements.recentSaves.innerHTML = "";
 
-  if (!project || !project.recentSaved.length) {
-    elements.recentSaves.className = "recent-saves empty-state";
-    elements.recentSaves.textContent = "No saved items yet.";
+function closeProjectContextMenu() {
+  elements.projectContextMenu.hidden = true;
+  state.projectContextPath = "";
+  document.querySelector(".project-card.is-context-target")?.classList.remove("is-context-target");
+}
+
+function openProjectContextMenu(x, y, projectPath, targetButton) {
+  state.projectContextPath = projectPath;
+  document.querySelector(".project-card.is-context-target")?.classList.remove("is-context-target");
+  targetButton.classList.add("is-context-target");
+  elements.projectContextMenu.hidden = false;
+  const maxLeft = window.innerWidth - elements.projectContextMenu.offsetWidth - 12;
+  const maxTop = window.innerHeight - elements.projectContextMenu.offsetHeight - 12;
+  elements.projectContextMenu.style.left = `${Math.max(12, Math.min(x, maxLeft))}px`;
+  elements.projectContextMenu.style.top = `${Math.max(12, Math.min(y, maxTop))}px`;
+}
+
+async function hideProjectFromPane(projectPath = state.projectContextPath) {
+  if (!projectPath) {
     return;
   }
 
-  elements.recentSaves.className = "recent-saves";
-  for (const item of project.recentSaved) {
-    const fragment = elements.recentItemTemplate.content.cloneNode(true);
-    const localTargets = resolveItemLocalTargets(project, item);
-    fragment.querySelector(".recent-type").textContent = formatItemTypeBadge(item.type);
-    fragment.querySelector(".recent-source").textContent = (item.sourceLabel || item.source || "Source").toUpperCase();
-    fragment.querySelector(".recent-title").textContent = item.title;
-    fragment.querySelector(".recent-meta").textContent =
-      `${formatDate(item.savedAt)} · ${summarizeNativeRecord(item)}`;
-    fragment.querySelector(".recent-open-app").addEventListener("click", () => {
-      void openItemInApp(item);
-    });
-    const openFileButton = fragment.querySelector(".recent-open-file");
-    openFileButton.disabled = !localTargets.length;
-    openFileButton.addEventListener("click", async () => {
-      if (!localTargets.length) {
-        return;
-      }
-      await window.troveApi.openPath(localTargets[0]);
-    });
-    elements.recentSaves.append(fragment);
-  }
+  const project = state.projects.find((entry) => entry.path === projectPath);
+  await window.troveApi.hideProject(projectPath);
+  closeProjectContextMenu();
+  const nextPreferredPath = state.activeProjectPath === projectPath ? null : state.activeProjectPath;
+  await refreshProjects(nextPreferredPath);
+  setMode("manage");
+  setMessage(`Closed ${project?.name || "library"} from the sidebar. Use Open Existing to bring it back.`);
 }
 
 function getProjectInventory(project) {
@@ -1452,6 +1932,8 @@ async function renderManageList() {
   elements.filterSaved.classList.toggle("is-active", state.manageFilter === "saved");
   elements.filterIgnored.classList.toggle("is-active", state.manageFilter === "ignored");
   elements.filterUncollected.classList.toggle("is-active", state.manageFilter === "uncollected");
+  elements.layoutCards?.classList.toggle("is-active", state.manageLayout === "cards");
+  elements.layoutCompact?.classList.toggle("is-active", state.manageLayout === "compact");
   if (elements.manageSearch && elements.manageSearch.value !== state.manageQuery) {
     elements.manageSearch.value = state.manageQuery;
   }
@@ -1459,36 +1941,25 @@ async function renderManageList() {
   elements.manageList.innerHTML = "";
 
   if (!inventory.length) {
+    state.manageExpandedKey = "";
     elements.manageList.className = "manage-list empty-state";
     elements.manageList.textContent = "No items in this filter yet.";
     return;
   }
 
-  elements.manageList.className = "manage-list";
+  elements.manageList.className = `manage-list${state.manageLayout === "compact" ? " is-compact" : ""}`;
+  if (state.manageLayout === "compact") {
+    await renderManageCompactList(project, inventory, renderToken);
+    return;
+  }
+
   for (const item of inventory) {
     const fragment = elements.manageItemTemplate.content.cloneNode(true);
     const card = fragment.querySelector(".manage-item");
-    const localTargets = resolveItemLocalTargets(project, item);
-    const statusNode = fragment.querySelector(".manage-item-status");
-    statusNode.textContent =
-      item.status === "saved" ? "Collected" : item.status === "ignored" ? "Ignored" : "Uncollected";
-    statusNode.classList.toggle("ignored", item.status === "ignored");
-    statusNode.classList.toggle("uncollected", item.status === "uncollected");
-    fragment.querySelector(".manage-item-type").textContent = formatItemTypeBadge(item.type);
-    fragment.querySelector(".manage-item-source").textContent = (item.sourceLabel || item.source || "Source").toUpperCase();
-    fragment.querySelector(".manage-item-title").textContent = item.title;
-    fragment.querySelector(".manage-item-meta").textContent = `${formatDate(item.timestamp)} · ${summarizeNativeRecord(item)} · ${item.url}`;
-    fragment.querySelector(".manage-open-page").addEventListener("click", () => {
-      void openItemInApp(item);
-    });
-    const openFile = fragment.querySelector(".manage-open-file");
-    openFile.disabled = !localTargets.length;
-    openFile.addEventListener("click", async () => {
-      if (!localTargets.length) {
-        return;
-      }
-      await window.troveApi.openPath(localTargets[0]);
-    });
+    card.classList.toggle("is-ignored", item.status === "ignored");
+    card.classList.toggle("is-uncollected", item.status === "uncollected");
+    card.classList.toggle("is-compact", state.manageLayout === "compact");
+    bindManageCardActions(card, project, item);
     card.addEventListener("click", (event) => {
       if (event.target.closest("button")) {
         return;
@@ -1506,12 +1977,15 @@ function updateNavigationButtons() {
     elements.backButton.disabled = true;
     elements.forwardButton.disabled = true;
     elements.reloadButton.disabled = true;
+    elements.saveSearchButton.disabled = true;
     return;
   }
 
   elements.backButton.disabled = !safeCanGo(activeTab, "back");
   elements.forwardButton.disabled = !safeCanGo(activeTab, "forward");
   elements.reloadButton.disabled = !activeTab.webview?.isConnected;
+  elements.saveSearchButton.disabled =
+    !getActiveProject() || !isWebviewReady(activeTab) || isCurrentPageAlreadySavedSearch();
 }
 
 async function applyProjectDecorations() {
@@ -1750,17 +2224,28 @@ async function showCaptureItem(item, origin = "page", context = getCaptureContex
 
 async function previewItemFromUrl(url) {
   const context = getCaptureContext();
+  const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
+  void applyImmediatePageLoading(placeholder, "preview", true);
   setMessage("Loading linked item preview…");
   resetCapturePane("Loading the linked record into the capture pane.", "Loading");
-  const item = await fetchItemByUrl(url, { mode: "preview" });
-  if (!item?.supported) {
-    clearPreviewState();
-    resetCapturePane(item?.reason || "Could not build a preview for that link.");
-    setMessage(item?.reason || "Could not build a preview for that link.");
-    return;
+  try {
+    const item = await fetchItemByUrl(url, { mode: "preview" });
+    if (!item?.supported) {
+      clearPreviewState();
+      resetCapturePane(item?.reason || "Could not build a preview for that link.");
+      setMessage(item?.reason || "Could not build a preview for that link.");
+      return;
+    }
+    const clickedUrl = ensureUrl(url);
+    const itemWithClickedAlias = {
+      ...item,
+      aliases: [...new Set([clickedUrl, item.url, ...(item.aliases || [])].filter(Boolean))]
+    };
+    await showCaptureItem(itemWithClickedAlias, "link", context);
+    setMessage(`Previewing ${itemWithClickedAlias.title}.`);
+  } finally {
+    void applyImmediatePageLoading(placeholder, "preview", false);
   }
-  await showCaptureItem(item, "link", context);
-  setMessage(`Previewing ${item.title}.`);
 }
 
 async function collectItem(item) {
@@ -1769,22 +2254,33 @@ async function collectItem(item) {
     setMessage("Select a project before collecting.");
     return;
   }
-  const savableItem = await ensureCollectableItem(item);
-  await window.troveApi.saveItem(project.path, savableItem);
-  if (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url) {
-    previewState.item = savableItem;
-    renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
-      origin: previewState.origin,
-      forcedStatus: "saved"
-    });
+  setCaptureBusy("collect", true, item);
+  await applyImmediatePageLoading(item, "collect", true);
+  try {
+    const savableItem = await ensureCollectableItem(item);
+    await window.troveApi.saveItem(project.path, savableItem);
+    if (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url) {
+      previewState.item = savableItem;
+      renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
+        origin: previewState.origin,
+        forcedStatus: "saved"
+      });
+    }
+    await applyImmediatePageFeedback(savableItem, "saved");
+    setMessage(`Collected ${savableItem.title}.`);
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      activeTab.lastItem = null;
+    }
+    await refreshProjects(project.path);
+  } finally {
+    state.saveProgress = null;
+    setCaptureBusy("", false);
+    await applyImmediatePageLoading(item, "collect", false);
+    if (getDisplayedItem()) {
+      renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
+    }
   }
-  await applyImmediatePageFeedback(savableItem, "saved");
-  setMessage(`Collected ${savableItem.title}.`);
-  const activeTab = getActiveTab();
-  if (activeTab) {
-    activeTab.lastItem = null;
-  }
-  await refreshProjects(project.path);
 }
 
 async function uncollectItem(item) {
@@ -1797,20 +2293,27 @@ async function uncollectItem(item) {
   if (!confirmed) {
     return;
   }
-  await window.troveApi.uncollectItem(project.path, item);
-  if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
-    renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
-      origin: previewState.origin,
-      forcedStatus: ""
-    });
+  setCaptureBusy("uncollect", true, item);
+  await applyImmediatePageLoading(item, "uncollect", true);
+  try {
+    await window.troveApi.uncollectItem(project.path, item);
+    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+      renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
+        origin: previewState.origin,
+        forcedStatus: ""
+      });
+    }
+    await applyImmediatePageFeedback(item, "");
+    setMessage(`Removed ${item.title} from the library.`);
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      activeTab.lastItem = null;
+    }
+    await refreshProjects(project.path);
+  } finally {
+    setCaptureBusy("", false);
+    await applyImmediatePageLoading(item, "uncollect", false);
   }
-  await applyImmediatePageFeedback(item, "");
-  setMessage(`Removed ${item.title} from the library.`);
-  const activeTab = getActiveTab();
-  if (activeTab) {
-    activeTab.lastItem = null;
-  }
-  await refreshProjects(project.path);
 }
 
 async function unignoreItem(item) {
@@ -1819,20 +2322,27 @@ async function unignoreItem(item) {
     setMessage("Select a project before changing ignored items.");
     return;
   }
-  await window.troveApi.unignoreItem(project.path, item);
-  if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
-    renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
-      origin: previewState.origin,
-      forcedStatus: ""
-    });
+  setCaptureBusy("unignore", true, item);
+  await applyImmediatePageLoading(item, "unignore", true);
+  try {
+    await window.troveApi.unignoreItem(project.path, item);
+    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+      renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
+        origin: previewState.origin,
+        forcedStatus: ""
+      });
+    }
+    await applyImmediatePageFeedback(item, "");
+    setMessage(`Unignored ${item.title}.`);
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      activeTab.lastItem = null;
+    }
+    await refreshProjects(project.path);
+  } finally {
+    setCaptureBusy("", false);
+    await applyImmediatePageLoading(item, "unignore", false);
   }
-  await applyImmediatePageFeedback(item, "");
-  setMessage(`Unignored ${item.title}.`);
-  const activeTab = getActiveTab();
-  if (activeTab) {
-    activeTab.lastItem = null;
-  }
-  await refreshProjects(project.path);
 }
 
 async function ensureCollectableItem(item) {
@@ -1885,13 +2395,76 @@ async function hydratePreviewAttachmentAtIndex(index) {
 }
 
 async function collectItemFromUrl(url) {
-  setMessage("Loading item to collect…");
-  const item = await fetchItemByUrl(url);
-  if (!item?.supported) {
-    setMessage(item?.reason || "Could not collect that link.");
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before collecting.");
     return;
   }
-  await collectItem(item);
+  const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
+  void applyImmediatePageLoading(placeholder, "collect", true);
+  setMessage("Loading item to collect…");
+  try {
+    const item = await fetchItemByUrl(url);
+    if (!item?.supported) {
+      setMessage(item?.reason || "Could not collect that link.");
+      return;
+    }
+    const clickedUrl = ensureUrl(url);
+    const itemWithClickedAlias = {
+      ...item,
+      aliases: [...new Set([clickedUrl, item.url, ...(item.aliases || [])].filter(Boolean))]
+    };
+    const status = sourceRegistry.itemStatus(project, itemWithClickedAlias);
+    if (status === "saved") {
+      await uncollectItem(itemWithClickedAlias);
+      return;
+    }
+    await collectItem(itemWithClickedAlias);
+  } finally {
+    void applyImmediatePageLoading(placeholder, "collect", false);
+  }
+}
+
+async function toggleIgnoreItemFromUrl(url) {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before ignoring items.");
+    return;
+  }
+  const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
+  void applyImmediatePageLoading(placeholder, "ignore", true);
+  setMessage("Loading item to update ignore state…");
+  try {
+    const item = await fetchItemByUrl(url);
+    if (!item?.supported) {
+      setMessage(item?.reason || "Could not update ignore state for that link.");
+      return;
+    }
+    const clickedUrl = ensureUrl(url);
+    const itemWithClickedAlias = {
+      ...item,
+      aliases: [...new Set([clickedUrl, item.url, ...(item.aliases || [])].filter(Boolean))]
+    };
+    const status = sourceRegistry.itemStatus(project, itemWithClickedAlias);
+    if (status === "saved") {
+      setMessage("Collected items must be uncollected before they can be ignored.");
+      return;
+    }
+    if (status === "ignored") {
+      await unignoreItem(itemWithClickedAlias);
+      return;
+    }
+    await window.troveApi.ignoreItem(project.path, itemWithClickedAlias);
+    await applyImmediatePageFeedback(itemWithClickedAlias, "ignored");
+    setMessage(`Ignored ${itemWithClickedAlias.title}.`);
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      activeTab.lastItem = null;
+    }
+    await refreshProjects(project.path);
+  } finally {
+    void applyImmediatePageLoading(placeholder, "ignore", false);
+  }
 }
 
 async function handleInlineAction(payload) {
@@ -1904,6 +2477,10 @@ async function handleInlineAction(payload) {
   }
   if (payload.action === "collect-link") {
     await collectItemFromUrl(payload.url);
+    return;
+  }
+  if (payload.action === "ignore-link") {
+    await toggleIgnoreItemFromUrl(payload.url);
   }
 }
 
@@ -1917,6 +2494,33 @@ async function getCurrentPageHtml() {
     throw new Error("Wait for the page to finish loading before dumping HTML.");
   }
   return activeTab.webview.executeJavaScript("document.documentElement.outerHTML", true);
+}
+
+async function saveCurrentSearchResults() {
+  const project = getActiveProject();
+  if (!project) {
+    setMessage("Select a project before saving a search.");
+    return;
+  }
+  const activeTab = getActiveTab();
+  if (!isWebviewReady(activeTab)) {
+    setMessage("Wait for the page to finish loading first.");
+    return;
+  }
+
+  const searchExport = {
+    pageTitle: activeTab.title || "",
+    pageUrl: activeTab.url || ""
+  };
+  if (!searchExport.pageUrl) {
+    setMessage("No search URL was available for this page.");
+    return;
+  }
+  const saved = await window.troveApi.saveSearchResults(project.path, searchExport);
+  await refreshProjectSearches(project);
+  renderSavedSearches();
+  renderSavedSearchMenu();
+  setMessage(`Saved search URL to ${saved.file}. Use the Saved Searches menu to reopen it.`);
 }
 
 async function saveDebugCapture(kind) {
@@ -2011,12 +2615,7 @@ async function updateCaptureState() {
     } catch {
       activeHostname = "";
     }
-    if (
-      activeHostname &&
-      ["trove.nla.gov.au", "catalogue.slwa.wa.gov.au", "encore.slwa.wa.gov.au", "purl.slwa.wa.gov.au", "museum.wa.gov.au"].includes(
-        activeHostname
-      )
-    ) {
+    if (isKnownCollectionHost(activeHostname)) {
       const fallback = await fetchItemByUrl(activeUrl, { force: true, mode: "preview" });
       if (requestId !== state.captureRequestId) {
         return;
@@ -2028,14 +2627,28 @@ async function updateCaptureState() {
   }
 
   if (!item?.supported) {
+    const activeUrl = activeTab.url || "";
+    let activeHostname = "";
+    try {
+      activeHostname = new URL(activeUrl).hostname.toLowerCase();
+    } catch {
+      activeHostname = "";
+    }
+    const knownCollectionHost = isKnownCollectionHost(activeHostname);
     elements.pageStatus.textContent = activeTab.title || "Page";
     elements.pageKind.className = "page-kind";
-    elements.pageKind.textContent = "Browse normally or preview a supported link from the page.";
+    elements.pageKind.textContent = knownCollectionHost
+      ? "This page itself is not directly collectible. Use Preview or Collect on the supported record links here."
+      : "Browse normally or preview a supported link from the page.";
     if (hasInlinePreviewForActiveTab() && previewState.item) {
       renderCapturePane(previewState.item, previewState.markdown, { origin: previewState.origin });
     } else {
       clearPreviewState();
-      resetCapturePane(item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record.");
+      resetCapturePane(
+        knownCollectionHost
+          ? "This page is a search or list view, not the final record. Use the inline Preview or Collect buttons on supported result links."
+          : item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record."
+      );
     }
     if (!project) {
       setMessage("Create or select a project first.");
@@ -2073,6 +2686,31 @@ async function updateCaptureState() {
 }
 
 document.addEventListener("click", (event) => {
+  if (
+    state.savedSearchMenuOpen &&
+    event.target instanceof Element &&
+    !event.target.closest(".toolbar-searches")
+  ) {
+    closeSavedSearchMenu();
+  }
+  if (
+    !elements.projectContextMenu.hidden &&
+    event.target instanceof Element &&
+    !event.target.closest("#project-context-menu") &&
+    !event.target.closest(".project-card")
+  ) {
+    closeProjectContextMenu();
+  }
+  const lightboxTrigger =
+    event.target instanceof Element ? event.target.closest("[data-open-image-lightbox]") : null;
+  if (lightboxTrigger) {
+    event.preventDefault();
+    openImageLightbox(
+      lightboxTrigger.getAttribute("data-open-image-lightbox") || "",
+      lightboxTrigger.getAttribute("data-image-caption") || ""
+    );
+    return;
+  }
   const previewImageTarget =
     event.target instanceof Element ? event.target.closest("[data-preview-image-index]") : null;
   if (previewImageTarget && getDisplayedItem()) {
@@ -2087,20 +2725,41 @@ document.addEventListener("click", (event) => {
     });
     return;
   }
-  const target = event.target instanceof Element ? event.target.closest("[data-open-external]") : null;
-  if (!target) {
-    return;
+});
+
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const button = event.target.closest("button");
+    if (button) {
+      acknowledgeButtonPress(button);
+    }
+  },
+  true
+);
+
+document.addEventListener("contextmenu", (event) => {
+  if (!(event.target instanceof Element) || !event.target.closest(".project-card")) {
+    closeProjectContextMenu();
   }
-  event.preventDefault();
-  const url = target.getAttribute("data-open-external");
-  if (url) {
-    void window.troveApi.openExternal(url);
-  }
+});
+
+elements.imageLightboxBackdrop.addEventListener("click", () => {
+  closeImageLightbox();
+});
+
+elements.imageLightboxClose.addEventListener("click", () => {
+  closeImageLightbox();
 });
 
 async function refreshProjects(preferredPath = state.activeProjectPath) {
   state.projects = await window.troveApi.listProjects();
-  if (!state.projects.length) {
+  if (preferredPath === null) {
+    state.activeProjectPath = "";
+  } else if (!state.projects.length) {
     state.activeProjectPath = "";
   } else if (!state.projects.some((project) => project.path === preferredPath)) {
     state.activeProjectPath = state.projects[0].path;
@@ -2108,11 +2767,11 @@ async function refreshProjects(preferredPath = state.activeProjectPath) {
     state.activeProjectPath = preferredPath;
   }
 
+  await refreshProjectSearches();
   renderProjects();
   renderProjectDetails();
-  renderRecentSaves();
+  renderSavedSearches();
   renderManageList();
-  renderProjectsWorkspace();
   renderDebugCwd();
   await applyProjectDecorations();
   await updateCaptureState();
@@ -2124,13 +2783,30 @@ async function chooseProjectLocation() {
     return;
   }
   state.selectedProjectDirectory = selected;
-  renderProjectLocation();
+  renderProjectDialogLocation();
   setMessage(`New libraries will be created in ${selected}.`);
 }
 
-elements.projectForm.addEventListener("submit", async (event) => {
+async function openExistingProject() {
+  const selected = await window.troveApi.chooseProjectFolder();
+  if (!selected) {
+    return;
+  }
+  await refreshProjects(selected);
+  setMessage(`Opened ${selected.split("/").pop()}.`);
+}
+
+async function closeActiveProject() {
+  if (!getActiveProject()) {
+    return;
+  }
+  await refreshProjects(null);
+  setMessage("Closed active project.");
+}
+
+elements.projectDialogForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const name = elements.projectNameInput.value.trim();
+  const name = elements.projectDialogName.value.trim();
   if (!name) {
     setMessage("Enter a project name first.");
     return;
@@ -2138,7 +2814,7 @@ elements.projectForm.addEventListener("submit", async (event) => {
 
   try {
     const project = await window.troveApi.createProject(state.selectedProjectDirectory, name);
-    elements.projectNameInput.value = "";
+    closeProjectDialog();
     setMessage(`Created ${project.folderName}.`);
     setMode("collect");
     await refreshProjects(project.path);
@@ -2147,15 +2823,26 @@ elements.projectForm.addEventListener("submit", async (event) => {
   }
 });
 
-elements.chooseProjectLocation.addEventListener("click", () => {
+elements.newProjectButton.addEventListener("click", () => {
+  openProjectDialog();
+});
+elements.projectDialogChooseLocation.addEventListener("click", () => {
   void chooseProjectLocation();
+});
+elements.projectDialogCancel.addEventListener("click", () => {
+  closeProjectDialog();
+});
+elements.projectDialogBackdrop.addEventListener("click", () => {
+  closeProjectDialog();
+});
+elements.openProjectButton.addEventListener("click", () => {
+  void openExistingProject();
 });
 elements.modeCollect.addEventListener("click", () => setMode("collect"));
 elements.modeManage.addEventListener("click", () => {
   setMode("manage");
   renderManageList();
 });
-elements.modeProjects.addEventListener("click", () => setMode("projects"));
 elements.modePlugins.addEventListener("click", () => setMode("plugins"));
 elements.filterAll.addEventListener("click", () => {
   state.manageFilter = "all";
@@ -2171,6 +2858,14 @@ elements.filterIgnored.addEventListener("click", () => {
 });
 elements.filterUncollected.addEventListener("click", () => {
   state.manageFilter = "uncollected";
+  renderManageList();
+});
+elements.layoutCards?.addEventListener("click", () => {
+  state.manageLayout = "cards";
+  renderManageList();
+});
+elements.layoutCompact?.addEventListener("click", () => {
+  state.manageLayout = "compact";
   renderManageList();
 });
 elements.manageSearch?.addEventListener("input", (event) => {
@@ -2191,6 +2886,19 @@ elements.openProjectFolder.addEventListener("click", async () => {
     return;
   }
   await window.troveApi.openPath(project.path);
+});
+elements.openSearchesFolder.addEventListener("click", async () => {
+  const project = getActiveProject();
+  if (!project) {
+    return;
+  }
+  await window.troveApi.openPath(`${project.path}/${project.folders?.searches || "searches"}`);
+});
+elements.closeProjectButton.addEventListener("click", () => {
+  void closeActiveProject();
+});
+elements.projectContextHide.addEventListener("click", () => {
+  void hideProjectFromPane();
 });
 
 elements.pluginSeedUrls.addEventListener("input", () => {
@@ -2220,6 +2928,17 @@ elements.addressForm.addEventListener("submit", (event) => {
 elements.backButton.addEventListener("click", () => getActiveTab()?.webview.goBack());
 elements.forwardButton.addEventListener("click", () => getActiveTab()?.webview.goForward());
 elements.reloadButton.addEventListener("click", () => getActiveTab()?.webview.reload());
+elements.saveSearchButton.addEventListener("click", () => {
+  void saveCurrentSearchResults();
+});
+elements.savedSearchesButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (elements.savedSearchesButton.disabled) {
+    return;
+  }
+  state.savedSearchMenuOpen = !state.savedSearchMenuOpen;
+  renderSavedSearchMenu();
+});
 elements.newTabButton.addEventListener("click", () => createTab());
 elements.debugToggle.addEventListener("click", () => toggleDebugDrawer());
 elements.debugClose.addEventListener("click", () => toggleDebugDrawer(false));
@@ -2255,9 +2974,18 @@ elements.captureCollect.addEventListener("click", async () => {
     setMessage("Select a project before collecting.");
     return;
   }
+  const currentItem = getDisplayedItem();
+  const currentStatus = currentItem ? sourceRegistry.itemStatus(project, currentItem) : "";
+  setCaptureBusy(
+    currentStatus === "saved" ? "uncollect" : "collect",
+    true,
+    currentItem,
+    currentStatus === "saved" ? "Removing…" : "Collecting…"
+  );
 
   const item = getDisplayedItem() || (await extractCurrentItem());
   if (!item?.supported && !getDisplayedItem()) {
+    setCaptureBusy("", false);
     setMessage(item?.reason || "This item cannot be collected.");
     return;
   }
@@ -2271,6 +2999,7 @@ elements.captureCollect.addEventListener("click", async () => {
     }
     await collectItem(targetItem);
   } catch (error) {
+    setCaptureBusy("", false);
     setMessage(error.message || "Collect failed.");
   }
 });
@@ -2281,10 +3010,19 @@ elements.captureIgnore.addEventListener("click", async () => {
     setMessage("Select a project before ignoring items.");
     return;
   }
+  const currentItem = getDisplayedItem();
+  const currentStatus = currentItem ? sourceRegistry.itemStatus(project, currentItem) : "";
+  setCaptureBusy(
+    currentStatus === "ignored" ? "unignore" : "ignore",
+    true,
+    currentItem,
+    currentStatus === "ignored" ? "Unignoring…" : "Ignoring…"
+  );
 
   const extracted = await extractCurrentItem();
   const item = getDisplayedItem() || extracted;
   if (!item?.supported && !getDisplayedItem()) {
+    setCaptureBusy("", false);
     setMessage(extracted?.reason || "This item cannot be ignored.");
     return;
   }
@@ -2310,12 +3048,35 @@ elements.captureIgnore.addEventListener("click", async () => {
     }
     await refreshProjects(project.path);
   } catch (error) {
+    setCaptureBusy("", false);
     setMessage(error.message || "Ignore failed.");
   }
 });
 
 window.addEventListener("keydown", (event) => {
+  if ((event.key === "Enter" || event.key === " ") && event.target instanceof Element) {
+    const button = event.target.closest("button");
+    if (button) {
+      acknowledgeButtonPress(button);
+    }
+  }
   if (event.key !== "Escape") {
+    return;
+  }
+  if (state.savedSearchMenuOpen) {
+    closeSavedSearchMenu();
+    return;
+  }
+  if (!elements.projectDialog.hidden) {
+    closeProjectDialog();
+    return;
+  }
+  if (!elements.projectContextMenu.hidden) {
+    closeProjectContextMenu();
+    return;
+  }
+  if (!elements.imageLightbox.hidden) {
+    closeImageLightbox();
     return;
   }
   if (!elements.debugDrawer.hidden) {
@@ -2325,7 +3086,7 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("DOMContentLoaded", async () => {
   applySidebarWidth();
-  renderProjectLocation();
+  renderProjectDialogLocation();
   renderMode();
   renderManageList();
   renderDebugCwd();
@@ -2340,6 +3101,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   window.addEventListener("resize", () => {
     syncWebviewElementSize();
     nudgeWebviewLayout(getActiveTab());
+  });
+  window.troveApi.onSaveProgress((payload) => {
+    void handleSaveProgress(payload);
   });
   window.troveApi.onContextNewTab((payload) => {
     openTabFromPayload(payload);
