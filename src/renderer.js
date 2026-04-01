@@ -21,7 +21,11 @@ const state = {
   sidebarWidth: 360,
   manageRenderToken: 0,
   captureBusy: null,
-  saveProgress: null
+  saveProgress: null,
+  actionQueue: [],
+  actionQueueRunning: false,
+  queuedActionIds: new Set(),
+  actionNonce: 0
 };
 
 const elements = {
@@ -554,15 +558,40 @@ function setButtonLoading(button, isLoading, label) {
   }
 }
 
-function setCaptureBusy(action, active, item = getDisplayedItem(), progressLabel = "") {
-  state.captureBusy = active ? { action, key: item?.key || "", url: item?.url || "", progressLabel } : null;
+function cloneItemSnapshot(item) {
+  if (!item) {
+    return null;
+  }
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(item);
+    } catch {
+      // Fall back to JSON cloning below.
+    }
+  }
+  try {
+    return JSON.parse(JSON.stringify(item));
+  } catch {
+    return {
+      ...item,
+      aliases: Array.isArray(item.aliases) ? [...item.aliases] : []
+    };
+  }
+}
+
+function setCaptureBusy(action, active, item = getDisplayedItem(), progressLabel = "", token = "") {
   if (!active) {
+    if (token && state.captureBusy?.token && state.captureBusy.token !== token) {
+      return;
+    }
+    state.captureBusy = null;
     setButtonLoading(elements.captureCollect, false);
     setButtonLoading(elements.captureIgnore, false);
     elements.captureProgress.hidden = true;
     elements.captureProgress.textContent = "";
     return;
   }
+  state.captureBusy = { action, key: item?.key || "", url: item?.url || "", progressLabel, token };
   elements.captureProgress.textContent = progressLabel || "";
   elements.captureProgress.hidden = !progressLabel;
   if (action === "preview") {
@@ -576,6 +605,123 @@ function setCaptureBusy(action, active, item = getDisplayedItem(), progressLabel
   if (action === "ignore" || action === "unignore") {
     setButtonLoading(elements.captureIgnore, true, `${describeBusyAction(action)}…`);
     elements.captureCollect.disabled = true;
+  }
+}
+
+function getQueuedActionTargetKey(action, projectPath, item, url) {
+  return [projectPath || "", action || "", item?.key || "", normalizeComparableUrl(url || item?.url || "")].join("::");
+}
+
+function buildQueuedActionTarget(item, url) {
+  if (item) {
+    const snapshot = cloneItemSnapshot(item);
+    const normalizedUrl = ensureUrl(snapshot.url || url || "");
+    snapshot.url = normalizedUrl || snapshot.url || "";
+    snapshot.aliases = [...new Set([normalizedUrl, ...(snapshot.aliases || [])].filter(Boolean))];
+    return snapshot;
+  }
+  const normalizedUrl = ensureUrl(url || "");
+  if (!normalizedUrl) {
+    return null;
+  }
+  return {
+    url: normalizedUrl,
+    aliases: [normalizedUrl]
+  };
+}
+
+function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
+  const item = typeof itemOrUrl === "string" ? null : itemOrUrl;
+  const url = typeof itemOrUrl === "string" ? itemOrUrl : itemOrUrl?.url || "";
+  const target = buildQueuedActionTarget(item, url);
+  if (!projectPath || !target) {
+    return false;
+  }
+
+  const actionKey = getQueuedActionTargetKey(action, projectPath, target, target.url);
+  if (state.queuedActionIds.has(actionKey)) {
+    return false;
+  }
+
+  const job = {
+    id: `action-${Date.now()}-${++state.actionNonce}`,
+    action,
+    actionKey,
+    projectPath,
+    item: target,
+    url: target.url,
+    queuedAt: Date.now(),
+    source: options.source || "",
+    label: options.label || ""
+  };
+  state.queuedActionIds.add(actionKey);
+  state.actionQueue.push(job);
+
+  const busyLabel = `${describeBusyAction(action)}…`;
+  setCaptureBusy(action, true, target, busyLabel, job.id);
+  void applyImmediatePageLoading(target, action, true, busyLabel);
+  void processActionQueue();
+  return true;
+}
+
+function getPreferredRefreshProjectPath(projectPath) {
+  return state.activeProjectPath === projectPath ? projectPath : state.activeProjectPath;
+}
+
+function queueRefreshProjects(projectPath, options = {}) {
+  void refreshProjects(getPreferredRefreshProjectPath(projectPath), options).catch(() => {});
+}
+
+async function resolveQueuedActionItem(job) {
+  const item = cloneItemSnapshot(job?.item);
+  if (!item) {
+    throw new Error("Queued action is missing its target.");
+  }
+  if (item.supported || item.key || (item.title && item.url)) {
+    return item;
+  }
+  const fetched = await fetchItemByUrl(job.url || item.url, { force: true, mode: "preview" });
+  if (!fetched?.supported) {
+    throw new Error(fetched?.reason || "Could not load the queued item.");
+  }
+  return {
+    ...fetched,
+    aliases: [...new Set([job.url, fetched.url, ...(fetched.aliases || []), ...(item.aliases || [])].filter(Boolean))]
+  };
+}
+
+async function processActionQueue() {
+  if (state.actionQueueRunning) {
+    return;
+  }
+  state.actionQueueRunning = true;
+  try {
+    while (state.actionQueue.length) {
+      const job = state.actionQueue.shift();
+      if (!job) {
+        continue;
+      }
+      try {
+        const item = await resolveQueuedActionItem(job);
+        if (job.action === "collect") {
+          await collectItem(item, job.projectPath, job.id);
+        } else if (job.action === "uncollect") {
+          await uncollectItem(item, job.projectPath, { skipConfirm: true, busyToken: job.id });
+        } else if (job.action === "ignore") {
+          await ignoreItemInProject(item, job.projectPath, job.id);
+        } else if (job.action === "unignore") {
+          await unignoreItem(item, job.projectPath, job.id);
+        }
+      } catch (error) {
+        setCaptureBusy("", false, null, "", job.id);
+        void applyImmediatePageLoading(job.item, job.action, false);
+        setMessage(error.message || `${describeBusyAction(job.action)} failed.`);
+      } finally {
+        state.queuedActionIds.delete(job.actionKey);
+      }
+    }
+  } finally {
+    state.actionQueueRunning = false;
   }
 }
 
@@ -1187,7 +1333,13 @@ async function safeExecuteJavaScript(target, script, userGesture = true, fallbac
     if (isTab && !isWebviewReady(target)) {
       return fallbackValue;
     }
-    return await webview.executeJavaScript(script, userGesture);
+    const execution = webview.executeJavaScript(script, userGesture);
+    return await Promise.race([
+      execution,
+      new Promise((resolve) => {
+        setTimeout(() => resolve(fallbackValue), 2000);
+      })
+    ]);
   } catch {
     return fallbackValue;
   }
@@ -2300,17 +2452,14 @@ async function previewItemFromUrl(url) {
   }
 }
 
-async function collectItem(item) {
-  const project = getActiveProject();
-  if (!project) {
+async function collectItem(item, projectPath = getActiveProject()?.path, busyToken = "") {
+  if (!projectPath) {
     setMessage("Select a project before collecting.");
     return;
   }
-  setCaptureBusy("collect", true, item);
-  await applyImmediatePageLoading(item, "collect", true);
   try {
     const savableItem = await ensureCollectableItem(item);
-    await window.troveApi.saveItem(project.path, savableItem);
+    await window.troveApi.saveItem(projectPath, savableItem);
     if (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url) {
       previewState.item = savableItem;
       renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
@@ -2324,10 +2473,14 @@ async function collectItem(item) {
     if (activeTab) {
       activeTab.lastItem = null;
     }
-    await refreshProjects(project.path);
+    if (busyToken) {
+      queueRefreshProjects(projectPath, { skipCapture: true });
+    } else {
+      await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
+    }
   } finally {
     state.saveProgress = null;
-    setCaptureBusy("", false);
+    setCaptureBusy("", false, null, "", busyToken);
     await applyImmediatePageLoading(item, "collect", false);
     if (getDisplayedItem()) {
       renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
@@ -2335,20 +2488,19 @@ async function collectItem(item) {
   }
 }
 
-async function uncollectItem(item) {
-  const project = getActiveProject();
-  if (!project) {
+async function uncollectItem(item, projectPath = getActiveProject()?.path, options = {}) {
+  if (!projectPath) {
     setMessage("Select a project before removing collected items.");
     return;
   }
-  const confirmed = window.confirm(`Delete this collected record from the library?\n\n${item.title}`);
+  const confirmed =
+    options.skipConfirm ||
+    window.confirm(`Delete this collected record from the library?\n\n${item.title}`);
   if (!confirmed) {
     return;
   }
-  setCaptureBusy("uncollect", true, item);
-  await applyImmediatePageLoading(item, "uncollect", true);
   try {
-    await window.troveApi.uncollectItem(project.path, item);
+    await window.troveApi.uncollectItem(projectPath, item);
     if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -2361,23 +2513,24 @@ async function uncollectItem(item) {
     if (activeTab) {
       activeTab.lastItem = null;
     }
-    await refreshProjects(project.path);
+    if (options.busyToken) {
+      queueRefreshProjects(projectPath, { skipCapture: true });
+    } else {
+      await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
+    }
   } finally {
-    setCaptureBusy("", false);
+    setCaptureBusy("", false, null, "", options.busyToken || "");
     await applyImmediatePageLoading(item, "uncollect", false);
   }
 }
 
-async function unignoreItem(item) {
-  const project = getActiveProject();
-  if (!project) {
+async function unignoreItem(item, projectPath = getActiveProject()?.path, busyToken = "") {
+  if (!projectPath) {
     setMessage("Select a project before changing ignored items.");
     return;
   }
-  setCaptureBusy("unignore", true, item);
-  await applyImmediatePageLoading(item, "unignore", true);
   try {
-    await window.troveApi.unignoreItem(project.path, item);
+    await window.troveApi.unignoreItem(projectPath, item);
     if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -2390,10 +2543,44 @@ async function unignoreItem(item) {
     if (activeTab) {
       activeTab.lastItem = null;
     }
-    await refreshProjects(project.path);
+    if (busyToken) {
+      queueRefreshProjects(projectPath, { skipCapture: true });
+    } else {
+      await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
+    }
   } finally {
-    setCaptureBusy("", false);
+    setCaptureBusy("", false, null, "", busyToken);
     await applyImmediatePageLoading(item, "unignore", false);
+  }
+}
+
+async function ignoreItemInProject(item, projectPath = getActiveProject()?.path, busyToken = "") {
+  if (!projectPath) {
+    setMessage("Select a project before ignoring items.");
+    return;
+  }
+  try {
+    await window.troveApi.ignoreItem(projectPath, item);
+    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+      renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
+        origin: previewState.origin,
+        forcedStatus: "ignored"
+      });
+    }
+    await applyImmediatePageFeedback(item, "ignored");
+    setMessage(`Ignored ${item.title}.`);
+    const activeTab = getActiveTab();
+    if (activeTab) {
+      activeTab.lastItem = null;
+    }
+    if (busyToken) {
+      queueRefreshProjects(projectPath, { skipCapture: true });
+    } else {
+      await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
+    }
+  } finally {
+    setCaptureBusy("", false, null, "", busyToken);
+    await applyImmediatePageLoading(item, "ignore", false);
   }
 }
 
@@ -2452,28 +2639,18 @@ async function collectItemFromUrl(url) {
     setMessage("Select a project before collecting.");
     return;
   }
-  const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
-  void applyImmediatePageLoading(placeholder, "collect", true);
-  setMessage("Loading item to collect…");
-  try {
-    const item = await fetchItemByUrl(url);
-    if (!item?.supported) {
-      setMessage(item?.reason || "Could not collect that link.");
+  const normalizedUrl = ensureUrl(url);
+  const status = sourceRegistry.itemStatus(project, { url: normalizedUrl, aliases: [normalizedUrl] });
+  const action = status === "saved" ? "uncollect" : "collect";
+  if (action === "uncollect") {
+    const confirmed = window.confirm("Are you sure you want to uncollect this item?");
+    if (!confirmed) {
       return;
     }
-    const clickedUrl = ensureUrl(url);
-    const itemWithClickedAlias = {
-      ...item,
-      aliases: [...new Set([clickedUrl, item.url, ...(item.aliases || [])].filter(Boolean))]
-    };
-    const status = sourceRegistry.itemStatus(project, itemWithClickedAlias);
-    if (status === "saved") {
-      await uncollectItem(itemWithClickedAlias);
-      return;
-    }
-    await collectItem(itemWithClickedAlias);
-  } finally {
-    void applyImmediatePageLoading(placeholder, "collect", false);
+  }
+  const queued = queueProjectAction(action, project.path, normalizedUrl, { source: "inline" });
+  if (queued) {
+    setMessage(`${describeBusyAction(action)} queued.`);
   }
 }
 
@@ -2483,39 +2660,16 @@ async function toggleIgnoreItemFromUrl(url) {
     setMessage("Select a project before ignoring items.");
     return;
   }
-  const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
-  void applyImmediatePageLoading(placeholder, "ignore", true);
-  setMessage("Loading item to update ignore state…");
-  try {
-    const item = await fetchItemByUrl(url);
-    if (!item?.supported) {
-      setMessage(item?.reason || "Could not update ignore state for that link.");
-      return;
-    }
-    const clickedUrl = ensureUrl(url);
-    const itemWithClickedAlias = {
-      ...item,
-      aliases: [...new Set([clickedUrl, item.url, ...(item.aliases || [])].filter(Boolean))]
-    };
-    const status = sourceRegistry.itemStatus(project, itemWithClickedAlias);
-    if (status === "saved") {
-      setMessage("Collected items must be uncollected before they can be ignored.");
-      return;
-    }
-    if (status === "ignored") {
-      await unignoreItem(itemWithClickedAlias);
-      return;
-    }
-    await window.troveApi.ignoreItem(project.path, itemWithClickedAlias);
-    await applyImmediatePageFeedback(itemWithClickedAlias, "ignored");
-    setMessage(`Ignored ${itemWithClickedAlias.title}.`);
-    const activeTab = getActiveTab();
-    if (activeTab) {
-      activeTab.lastItem = null;
-    }
-    await refreshProjects(project.path);
-  } finally {
-    void applyImmediatePageLoading(placeholder, "ignore", false);
+  const normalizedUrl = ensureUrl(url);
+  const status = sourceRegistry.itemStatus(project, { url: normalizedUrl, aliases: [normalizedUrl] });
+  if (status === "saved") {
+    setMessage("Collected items must be uncollected before they can be ignored.");
+    return;
+  }
+  const action = status === "ignored" ? "unignore" : "ignore";
+  const queued = queueProjectAction(action, project.path, normalizedUrl, { source: "inline" });
+  if (queued) {
+    setMessage(`${describeBusyAction(action)} queued.`);
   }
 }
 
@@ -2807,7 +2961,7 @@ elements.imageLightboxClose.addEventListener("click", () => {
   closeImageLightbox();
 });
 
-async function refreshProjects(preferredPath = state.activeProjectPath) {
+async function refreshProjects(preferredPath = state.activeProjectPath, options = {}) {
   state.projects = await window.troveApi.listProjects();
   if (preferredPath === null) {
     state.activeProjectPath = "";
@@ -2826,7 +2980,9 @@ async function refreshProjects(preferredPath = state.activeProjectPath) {
   renderManageList();
   renderDebugCwd();
   await applyProjectDecorations();
-  await updateCaptureState();
+  if (!options.skipCapture) {
+    await updateCaptureState();
+  }
 }
 
 async function chooseProjectLocation() {
@@ -3031,32 +3187,22 @@ elements.captureCollect.addEventListener("click", async () => {
     return;
   }
   const currentItem = getDisplayedItem();
-  const currentStatus = currentItem ? sourceRegistry.itemStatus(project, currentItem) : "";
-  setCaptureBusy(
-    currentStatus === "saved" ? "uncollect" : "collect",
-    true,
-    currentItem,
-    currentStatus === "saved" ? "Removing…" : "Collecting…"
-  );
-
-  const item = getDisplayedItem() || (await extractCurrentItem());
-  if (!item?.supported && !getDisplayedItem()) {
-    setCaptureBusy("", false);
-    setMessage(item?.reason || "This item cannot be collected.");
-    return;
-  }
-
-  try {
-    const targetItem = getDisplayedItem() || item;
-    const status = sourceRegistry.itemStatus(project, targetItem);
-    if (status === "saved") {
-      await uncollectItem(targetItem);
+  const target = currentItem || { url: ensureUrl(getActiveTab()?.url || "") };
+  const currentStatus = target ? sourceRegistry.itemStatus(project, target) : "";
+  const action = currentStatus === "saved" ? "uncollect" : "collect";
+  if (action === "uncollect") {
+    const confirmed = window.confirm("Are you sure you want to uncollect this item?");
+    if (!confirmed) {
       return;
     }
-    await collectItem(targetItem);
-  } catch (error) {
-    setCaptureBusy("", false);
-    setMessage(error.message || "Collect failed.");
+  }
+  if (!target?.url && !target?.supported) {
+    setMessage("This item cannot be collected.");
+    return;
+  }
+  const queued = queueProjectAction(action, project.path, target, { source: "sidebar" });
+  if (queued) {
+    setMessage(`${describeBusyAction(action)} queued.`);
   }
 });
 
@@ -3067,45 +3213,20 @@ elements.captureIgnore.addEventListener("click", async () => {
     return;
   }
   const currentItem = getDisplayedItem();
-  const currentStatus = currentItem ? sourceRegistry.itemStatus(project, currentItem) : "";
-  setCaptureBusy(
-    currentStatus === "ignored" ? "unignore" : "ignore",
-    true,
-    currentItem,
-    currentStatus === "ignored" ? "Unignoring…" : "Ignoring…"
-  );
-
-  const extracted = await extractCurrentItem();
-  const item = getDisplayedItem() || extracted;
-  if (!item?.supported && !getDisplayedItem()) {
-    setCaptureBusy("", false);
-    setMessage(extracted?.reason || "This item cannot be ignored.");
+  const target = currentItem || { url: ensureUrl(getActiveTab()?.url || "") };
+  const currentStatus = target ? sourceRegistry.itemStatus(project, target) : "";
+  if (currentStatus === "saved") {
+    setMessage("Collected items must be uncollected before they can be ignored.");
     return;
   }
-
-  try {
-    const status = sourceRegistry.itemStatus(project, item);
-    if (status === "ignored") {
-      await unignoreItem(item);
-      return;
-    }
-    await window.troveApi.ignoreItem(project.path, item);
-    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
-      renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
-        origin: previewState.origin,
-        forcedStatus: "ignored"
-      });
-    }
-    await applyImmediatePageFeedback(item, "ignored");
-    setMessage(`Ignored ${item.title}.`);
-    const activeTab = getActiveTab();
-    if (activeTab) {
-      activeTab.lastItem = null;
-    }
-    await refreshProjects(project.path);
-  } catch (error) {
-    setCaptureBusy("", false);
-    setMessage(error.message || "Ignore failed.");
+  const action = currentStatus === "ignored" ? "unignore" : "ignore";
+  if (!target?.url && !target?.supported) {
+    setMessage("This item cannot be ignored.");
+    return;
+  }
+  const queued = queueProjectAction(action, project.path, target, { source: "sidebar" });
+  if (queued) {
+    setMessage(`${describeBusyAction(action)} queued.`);
   }
 });
 
