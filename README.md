@@ -130,6 +130,15 @@ This is intended for Codex / Claude style workspace assistance:
 - open pasted live URLs into the app as tabs
 - prepare follow-up work without scraping the live browser state
 
+The intended research loop is recursive, not one-shot:
+
+- review the current body of saved articles and images
+- identify strengths, gaps, weak coverage, repeated phrases, and unusual themes
+- suggest new search terms, names, places, industries, dates, and quoted wording based on that body
+- save those search URLs back into the library so the path to the next tranche of material is preserved
+
+In other words, Codex or Claude should not just summarize what is already there. They should propose the next search moves from the language and patterns already emerging in the library.
+
 ## Adding A New Source
 
 Use the `Plugins` screen or run the probe manually with a few representative URLs:

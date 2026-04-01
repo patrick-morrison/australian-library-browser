@@ -1,0 +1,341 @@
+#!/usr/bin/env node
+
+const fs = require("fs/promises");
+const path = require("path");
+
+const yaml = require("js-yaml");
+const { _electron: electron } = require("playwright");
+
+const repoRoot = path.resolve(__dirname, "..");
+const screenshotDir = path.join(repoRoot, "tmp", "e2e-live");
+
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+async function ensureScreenshotDir() {
+  await fs.mkdir(screenshotDir, { recursive: true });
+}
+
+async function launchApp() {
+  const electronBinary = require("electron");
+  return electron.launch({
+    executablePath: electronBinary,
+    args: [repoRoot],
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: ""
+    }
+  });
+}
+
+async function createProject(page, projectName) {
+  const projectSlug = slugify(projectName);
+  const projectDir = path.join(repoRoot, projectSlug);
+  console.log(`[live] creating project ${projectName}`);
+  await page.click("#mode-manage");
+  await page.click("#new-project-button");
+  await page.waitForSelector("#project-dialog:not([hidden])");
+  await page.fill("#project-dialog-name", projectName);
+  await page.click("#project-dialog-form .primary-action");
+  await page.waitForFunction(() => document.querySelector(".app-shell")?.classList.contains("mode-collect"), null, {
+    timeout: 20000
+  });
+  await page.waitForFunction(
+    (slug) => {
+      const text = document.querySelector("#project-details")?.textContent || "";
+      return text.toLowerCase().includes(slug);
+    },
+    projectSlug,
+    { timeout: 20000 }
+  );
+  return { projectName, projectSlug, projectDir };
+}
+
+async function navigate(page, url) {
+  console.log(`[live] navigate ${url}`);
+  await page.evaluate((targetUrl) => {
+    const input = document.querySelector("#address-input");
+    const form = document.querySelector("#address-form");
+    if (!(input instanceof HTMLInputElement) || !(form instanceof HTMLFormElement)) {
+      throw new Error("Address form unavailable");
+    }
+    input.value = targetUrl;
+    form.requestSubmit();
+  }, url);
+}
+
+async function waitForInlineActions(page, minCount = 1, timeout = 30000) {
+  console.log("[live] waiting for inline actions");
+  await page.waitForSelector("#webview-stack webview", { timeout });
+  await page.waitForFunction(
+    async (requiredCount) => {
+      const webview = document.querySelector("#webview-stack webview");
+      if (!webview) {
+        return false;
+      }
+      try {
+        const count = await webview.executeJavaScript(
+          `(() => document.querySelectorAll(".trove-library-inline-actions").length)()`,
+          true
+        );
+        return Number(count || 0) >= requiredCount;
+      } catch {
+        return false;
+      }
+    },
+    minCount,
+    { timeout }
+  );
+  let bestCount = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const currentCount = await page.evaluate(async () => {
+      const webview = document.querySelector("#webview-stack webview");
+      return webview.executeJavaScript(
+        `(() => document.querySelectorAll(".trove-library-inline-actions").length)()`,
+        true
+      );
+    });
+    bestCount = Math.max(bestCount, Number(currentCount || 0));
+    if (bestCount >= minCount) {
+      break;
+    }
+    await page.waitForTimeout(1500);
+  }
+  return Math.max(bestCount, minCount);
+}
+
+async function webviewEval(page, expression, arg) {
+  return page.evaluate(
+    async ({ script, payload }) => {
+      const webview = document.querySelector("#webview-stack webview");
+      if (!webview) {
+        throw new Error("Webview unavailable");
+      }
+      return webview.executeJavaScript(`(${script})(${JSON.stringify(payload)})`, true);
+    },
+    { script: expression, payload: arg }
+  );
+}
+
+async function clickInlineAction(page, { action, textMatch = "", index = 0 }) {
+  console.log(`[live] inline ${action} ${textMatch || `(index ${index})`}`);
+  return webviewEval(
+    page,
+    `(payload) => {
+      const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
+      const normalizedNeedle = String(payload.textMatch || "").toLowerCase();
+      const resolveContainer = (group) => {
+        let pointer = group;
+        while (pointer && pointer !== document.body) {
+          const text = String(pointer.textContent || "").replace(/\\s+/g, " ").trim();
+          const links = pointer.querySelectorAll("a[href]").length;
+          if (text.length > 60 && links > 0) {
+            return pointer;
+          }
+          pointer = pointer.parentElement;
+        }
+        return group.parentElement || group;
+      };
+      const candidates = groups
+        .map((group) => {
+          const button = group.querySelector("button." + payload.action);
+          const container = resolveContainer(group);
+          const text = String(container?.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
+          return { group, button, container, text };
+        })
+        .filter((entry) => entry.button)
+        .filter((entry) => (normalizedNeedle ? entry.text.includes(normalizedNeedle) : true));
+      const entry = candidates[payload.index] || null;
+      const button = entry?.button || null;
+      if (!(button instanceof HTMLButtonElement)) {
+        return { ok: false, count: candidates.length };
+      }
+      button.click();
+      return {
+        ok: true,
+        text: button.textContent || "",
+        containerText: String(entry.container?.textContent || "")
+          .replace(/\\s+/g, " ")
+          .trim()
+          .slice(0, 500)
+      };
+    }`,
+    { action, textMatch, index }
+  );
+}
+
+async function waitForInlineState(page, { textMatch = "", expectText = "", rowOpacity, rowContains = "" }, timeout = 60000) {
+  await page.waitForFunction(
+    async (payload) => {
+      const webview = document.querySelector("#webview-stack webview");
+      if (!webview) {
+        return false;
+      }
+      try {
+        return await webview.executeJavaScript(
+          `((config) => {
+            const needle = String(config.textMatch || "").toLowerCase();
+            const resolveContainer = (group) => {
+              let pointer = group;
+              while (pointer && pointer !== document.body) {
+                const text = String(pointer.textContent || "").replace(/\\s+/g, " ").trim();
+                const links = pointer.querySelectorAll("a[href]").length;
+                if (text.length > 60 && links > 0) {
+                  return pointer;
+                }
+                pointer = pointer.parentElement;
+              }
+              return group.parentElement || group;
+            };
+            const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
+            const entry = groups.map((group) => {
+              const buttons = Array.from(group.querySelectorAll("button"));
+              const button = buttons.find((candidate) => {
+                if (!config.expectText) {
+                  return true;
+                }
+                return String(candidate.textContent || "").replace(/\\s+/g, " ").trim() === config.expectText;
+              }) || buttons[0] || null;
+              const container = resolveContainer(group);
+              const text = String(container?.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
+              return { button, container, text };
+            }).find((candidate) => {
+              return needle ? candidate.text.includes(needle) : true;
+            });
+            const button = entry?.button || null;
+            const container = entry?.container || null;
+            if (!button || !container) {
+              return false;
+            }
+            const buttonText = String(button.textContent || "").replace(/\\s+/g, " ").trim();
+            const rowText = String(container?.textContent || "").replace(/\\s+/g, " ").trim();
+            const rowStyle = container ? getComputedStyle(container) : null;
+            if (config.expectText && buttonText !== config.expectText) {
+              return false;
+            }
+            if (config.rowContains && !rowText.toLowerCase().includes(String(config.rowContains).toLowerCase())) {
+              return false;
+            }
+            if (config.rowOpacity != null) {
+              const opacity = Number(rowStyle?.opacity || 1);
+              if (opacity > Number(config.rowOpacity)) {
+                return false;
+              }
+            }
+            return true;
+          })(${JSON.stringify(payload)})`,
+          true
+        );
+      } catch {
+        return false;
+      }
+    },
+    { textMatch, expectText, rowOpacity, rowContains },
+    { timeout }
+  );
+}
+
+async function waitForPreview(page, kind, options = {}) {
+  const normalizedOptions = typeof options === "number" ? { timeout: options } : options;
+  const timeout = normalizedOptions.timeout || 90000;
+  const markdownIncludes = String(normalizedOptions.markdownIncludes || "");
+  const imageSrcIncludes = String(normalizedOptions.imageSrcIncludes || "");
+  console.log(`[live] waiting for ${kind} preview`);
+  await page.waitForFunction(
+    ({ expectKind, expectedMarkdown, expectedImageSrc }) => {
+      const body = document.querySelector("#capture-body");
+      if (!body || body.hidden) {
+        return false;
+      }
+      const markdown = document.querySelector("#capture-markdown")?.innerText || "";
+      const image = document.querySelector("#capture-image-gallery .capture-gallery-primary img");
+      const imageSrc = String(image?.currentSrc || image?.src || "");
+      if (expectKind === "text") {
+        return markdown.length > 250 && /Link:/i.test(markdown) && (!expectedMarkdown || markdown.includes(expectedMarkdown));
+      }
+      if (expectKind === "image") {
+        return (
+          markdown.length > 120 &&
+          Boolean(image && image.naturalWidth > 300 && /\.jpg/i.test(imageSrc)) &&
+          (!expectedMarkdown || markdown.includes(expectedMarkdown)) &&
+          (!expectedImageSrc || imageSrc.includes(expectedImageSrc))
+        );
+      }
+      return markdown.length > 100 && (!expectedMarkdown || markdown.includes(expectedMarkdown));
+    },
+    { expectKind: kind, expectedMarkdown: markdownIncludes, expectedImageSrc: imageSrcIncludes },
+    { timeout }
+  );
+}
+
+async function clickSidebarCollect(page) {
+  console.log("[live] sidebar collect");
+  await page.click("#capture-collect");
+}
+
+async function waitForSidebarCollectState(page, expectedText, timeout = 90000) {
+  await page.waitForFunction(
+    (text) => {
+      const button = document.querySelector("#capture-collect");
+      return Boolean(button && String(button.textContent || "").includes(text));
+    },
+    expectedText,
+    { timeout }
+  );
+}
+
+async function confirmDialog(page) {
+  page.once("dialog", (dialog) => dialog.accept());
+}
+
+async function expectManageSummary(page, text, timeout = 30000) {
+  await page.click("#mode-manage");
+  await page.waitForFunction(
+    (value) => (document.querySelector("#manage-summary")?.textContent || "").includes(value),
+    text,
+    { timeout }
+  );
+}
+
+async function screenshot(page, name) {
+  await ensureScreenshotDir();
+  const shot = path.join(screenshotDir, name);
+  await page.screenshot({ path: shot, fullPage: false });
+  return shot;
+}
+
+async function readManifest(projectDir, projectSlug) {
+  const manifestPath = path.join(projectDir, `${projectSlug}.trovelibrary`);
+  const manifest = yaml.load(await fs.readFile(manifestPath, "utf8"));
+  return { manifestPath, manifest };
+}
+
+async function cleanupProject(projectDir) {
+  await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {});
+}
+
+module.exports = {
+  repoRoot,
+  screenshotDir,
+  slugify,
+  launchApp,
+  createProject,
+  navigate,
+  waitForInlineActions,
+  clickInlineAction,
+  waitForInlineState,
+  waitForPreview,
+  clickSidebarCollect,
+  waitForSidebarCollectState,
+  confirmDialog,
+  expectManageSummary,
+  screenshot,
+  readManifest,
+  cleanupProject
+};

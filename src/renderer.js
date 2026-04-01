@@ -650,6 +650,7 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
     projectPath,
     item: target,
     url: target.url,
+    context: options.context || getCaptureContext(),
     queuedAt: Date.now(),
     source: options.source || "",
     label: options.label || ""
@@ -704,13 +705,13 @@ async function processActionQueue() {
       try {
         const item = await resolveQueuedActionItem(job);
         if (job.action === "collect") {
-          await collectItem(item, job.projectPath, job.id);
+          await collectItem(item, job.projectPath, job.id, job.context);
         } else if (job.action === "uncollect") {
-          await uncollectItem(item, job.projectPath, { skipConfirm: true, busyToken: job.id });
+          await uncollectItem(item, job.projectPath, { skipConfirm: true, busyToken: job.id, context: job.context });
         } else if (job.action === "ignore") {
-          await ignoreItemInProject(item, job.projectPath, job.id);
+          await ignoreItemInProject(item, job.projectPath, job.id, job.context);
         } else if (job.action === "unignore") {
-          await unignoreItem(item, job.projectPath, job.id);
+          await unignoreItem(item, job.projectPath, job.id, job.context);
         }
       } catch (error) {
         setCaptureBusy("", false, null, "", job.id);
@@ -731,6 +732,16 @@ function getCaptureContext() {
     tabId: activeTab?.id || "",
     pageUrl: activeTab?.url || ""
   };
+}
+
+function isCaptureContextCurrent(context = {}) {
+  const activeTab = getActiveTab();
+  return Boolean(
+    activeTab &&
+      context &&
+      activeTab.id === (context.tabId || "") &&
+      ensureUrl(activeTab.url || "") === ensureUrl(context.pageUrl || "")
+  );
 }
 
 function clearPreviewState() {
@@ -2452,7 +2463,7 @@ async function previewItemFromUrl(url) {
   }
 }
 
-async function collectItem(item, projectPath = getActiveProject()?.path, busyToken = "") {
+async function collectItem(item, projectPath = getActiveProject()?.path, busyToken = "", context = null) {
   if (!projectPath) {
     setMessage("Select a project before collecting.");
     return;
@@ -2460,7 +2471,7 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
   try {
     const savableItem = await ensureCollectableItem(item);
     await window.troveApi.saveItem(projectPath, savableItem);
-    if (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url) {
+    if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url)) {
       previewState.item = savableItem;
       renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -2468,7 +2479,9 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
       });
     }
     await applyImmediatePageFeedback(savableItem, "saved");
-    setMessage(`Collected ${savableItem.title}.`);
+    if (isCaptureContextCurrent(context)) {
+      setMessage(`Collected ${savableItem.title}.`);
+    }
     const activeTab = getActiveTab();
     if (activeTab) {
       activeTab.lastItem = null;
@@ -2482,7 +2495,7 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
     state.saveProgress = null;
     setCaptureBusy("", false, null, "", busyToken);
     await applyImmediatePageLoading(item, "collect", false);
-    if (getDisplayedItem()) {
+    if (isCaptureContextCurrent(context) && getDisplayedItem()) {
       renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
     }
   }
@@ -2501,14 +2514,16 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
   }
   try {
     await window.troveApi.uncollectItem(projectPath, item);
-    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+    if (isCaptureContextCurrent(options.context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: ""
       });
     }
     await applyImmediatePageFeedback(item, "");
-    setMessage(`Removed ${item.title} from the library.`);
+    if (isCaptureContextCurrent(options.context)) {
+      setMessage(`Removed ${item.title} from the library.`);
+    }
     const activeTab = getActiveTab();
     if (activeTab) {
       activeTab.lastItem = null;
@@ -2524,21 +2539,23 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
   }
 }
 
-async function unignoreItem(item, projectPath = getActiveProject()?.path, busyToken = "") {
+async function unignoreItem(item, projectPath = getActiveProject()?.path, busyToken = "", context = null) {
   if (!projectPath) {
     setMessage("Select a project before changing ignored items.");
     return;
   }
   try {
     await window.troveApi.unignoreItem(projectPath, item);
-    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+    if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: ""
       });
     }
     await applyImmediatePageFeedback(item, "");
-    setMessage(`Unignored ${item.title}.`);
+    if (isCaptureContextCurrent(context)) {
+      setMessage(`Unignored ${item.title}.`);
+    }
     const activeTab = getActiveTab();
     if (activeTab) {
       activeTab.lastItem = null;
@@ -2554,21 +2571,23 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
   }
 }
 
-async function ignoreItemInProject(item, projectPath = getActiveProject()?.path, busyToken = "") {
+async function ignoreItemInProject(item, projectPath = getActiveProject()?.path, busyToken = "", context = null) {
   if (!projectPath) {
     setMessage("Select a project before ignoring items.");
     return;
   }
   try {
     await window.troveApi.ignoreItem(projectPath, item);
-    if (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url) {
+    if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: "ignored"
       });
     }
     await applyImmediatePageFeedback(item, "ignored");
-    setMessage(`Ignored ${item.title}.`);
+    if (isCaptureContextCurrent(context)) {
+      setMessage(`Ignored ${item.title}.`);
+    }
     const activeTab = getActiveTab();
     if (activeTab) {
       activeTab.lastItem = null;
@@ -3130,7 +3149,16 @@ elements.addressForm.addEventListener("submit", (event) => {
     return;
   }
   const nextUrl = ensureUrl(elements.addressInput.value);
+  activeTab.url = nextUrl;
+  invalidateTabCaches(activeTab);
+  clearPreviewState();
+  elements.pageStatus.textContent = "Loading";
+  elements.pageKind.className = "page-kind";
+  elements.pageKind.textContent = "Waiting for a supported collection page";
+  setMessage("Loading page…");
+  resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
   activeTab.webview.loadURL(nextUrl);
+  scheduleTabRefresh(activeTab, { delay: 1500 });
 });
 
 elements.backButton.addEventListener("click", () => getActiveTab()?.webview.goBack());
