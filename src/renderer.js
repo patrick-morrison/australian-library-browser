@@ -25,7 +25,8 @@ const state = {
   actionQueue: [],
   actionQueueRunning: false,
   queuedActionIds: new Set(),
-  actionNonce: 0
+  actionNonce: 0,
+  troveLinkDialogUrls: []
 };
 
 const elements = {
@@ -102,6 +103,15 @@ const elements = {
   pluginCopyProbeCommand: document.getElementById("plugin-copy-probe-command"),
   pluginPromptOutput: document.getElementById("plugin-prompt-output"),
   pluginStatus: document.getElementById("plugin-status"),
+  troveLinkExtractorButton: document.getElementById("trove-link-extractor-button"),
+  troveLinkExtractorStatus: document.getElementById("trove-link-extractor-status"),
+  troveLinkDialog: document.getElementById("trove-link-dialog"),
+  troveLinkDialogBackdrop: document.getElementById("trove-link-dialog-backdrop"),
+  troveLinkDialogInput: document.getElementById("trove-link-dialog-input"),
+  troveLinkDialogStatus: document.getElementById("trove-link-dialog-status"),
+  troveLinkDialogPreview: document.getElementById("trove-link-dialog-preview"),
+  troveLinkDialogCancel: document.getElementById("trove-link-dialog-cancel"),
+  troveLinkDialogOpen: document.getElementById("trove-link-dialog-open"),
   debugDrawer: document.getElementById("debug-drawer"),
   debugClose: document.getElementById("debug-close"),
   debugSavePage: document.getElementById("debug-save-page"),
@@ -224,6 +234,55 @@ function openProjectDialog() {
 function closeProjectDialog() {
   elements.projectDialog.hidden = true;
   elements.projectDialogName.value = "";
+}
+
+function renderTroveLinkDialogPreview() {
+  const urls = state.troveLinkDialogUrls;
+  elements.troveLinkDialogOpen.disabled = !urls.length;
+  elements.troveLinkDialogStatus.textContent = urls.length
+    ? `Found ${urls.length} Trove link${urls.length === 1 ? "" : "s"}.`
+    : "No Trove links found yet.";
+  elements.troveLinkExtractorStatus.textContent = urls.length
+    ? `${urls.length} Trove link${urls.length === 1 ? "" : "s"} ready to open from pasted text.`
+    : "Looks for Trove article, work, and search URLs inside unstructured text.";
+
+  if (!urls.length) {
+    elements.troveLinkDialogPreview.className = "trove-link-dialog-preview empty-state";
+    elements.troveLinkDialogPreview.textContent = "Paste text to preview extracted Trove links.";
+    return;
+  }
+
+  elements.troveLinkDialogPreview.className = "trove-link-dialog-preview";
+  elements.troveLinkDialogPreview.innerHTML = urls
+    .map(
+      (url, index) => `
+        <div class="trove-link-preview-item">
+          <span class="trove-link-preview-index">Link ${index + 1}</span>
+          <span class="trove-link-preview-url">${escapeHtml(url)}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function updateTroveLinkDialogFromInput() {
+  state.troveLinkDialogUrls = extractTroveUrls(elements.troveLinkDialogInput.value);
+  renderTroveLinkDialogPreview();
+}
+
+function openTroveLinkDialog() {
+  state.troveLinkDialogUrls = [];
+  elements.troveLinkDialogInput.value = "";
+  renderTroveLinkDialogPreview();
+  elements.troveLinkDialog.hidden = false;
+  queueMicrotask(() => elements.troveLinkDialogInput.focus());
+}
+
+function closeTroveLinkDialog() {
+  elements.troveLinkDialog.hidden = true;
+  elements.troveLinkDialogInput.value = "";
+  state.troveLinkDialogUrls = [];
+  renderTroveLinkDialogPreview();
 }
 
 async function refreshProjectSearches(project = getActiveProject()) {
@@ -448,6 +507,24 @@ function formatSavedSearchUrl(value) {
     const index = text.indexOf("?");
     return index >= 0 ? text.slice(index + 1) : text;
   }
+}
+
+function extractTroveUrls(value) {
+  const text = String(value || "");
+  const matches = text.match(/(?:https?:\/\/)?(?:trove\.nla\.gov\.au|nla\.gov\.au)\/[^\s<>"'“”]+/gi) || [];
+  return [
+    ...new Set(
+      matches
+        .map((entry) =>
+          String(entry || "")
+            .trim()
+            .replace(/[),.;:'"”“’]+$/g, "")
+            .replace(/#$/g, "")
+        )
+        .map((entry) => ensureUrl(entry))
+        .filter((entry) => /^https?:\/\/(?:trove\.nla\.gov\.au|nla\.gov\.au)\//i.test(entry))
+    )
+  ];
 }
 
 function normalizeComparableUrl(value) {
@@ -3142,6 +3219,33 @@ elements.pluginCopyProbeCommand.addEventListener("click", async () => {
   setMessage("Copied source probe command.");
 });
 
+elements.troveLinkExtractorButton?.addEventListener("click", () => {
+  openTroveLinkDialog();
+});
+
+elements.troveLinkDialogInput?.addEventListener("input", () => {
+  updateTroveLinkDialogFromInput();
+});
+
+elements.troveLinkDialogCancel?.addEventListener("click", () => {
+  closeTroveLinkDialog();
+});
+
+elements.troveLinkDialogBackdrop?.addEventListener("click", () => {
+  closeTroveLinkDialog();
+});
+
+elements.troveLinkDialogOpen?.addEventListener("click", () => {
+  const urls = [...state.troveLinkDialogUrls];
+  if (!urls.length) {
+    return;
+  }
+  setMode("collect");
+  openUrlListInTabs(urls);
+  closeTroveLinkDialog();
+  setMessage(`Opening ${urls.length} Trove tab${urls.length === 1 ? "" : "s"}.`);
+});
+
 elements.addressForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const activeTab = getActiveTab();
@@ -3276,6 +3380,10 @@ window.addEventListener("keydown", (event) => {
     closeProjectDialog();
     return;
   }
+  if (!elements.troveLinkDialog.hidden) {
+    closeTroveLinkDialog();
+    return;
+  }
   if (!elements.projectContextMenu.hidden) {
     closeProjectContextMenu();
     return;
@@ -3292,6 +3400,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("DOMContentLoaded", async () => {
   applySidebarWidth();
   renderProjectDialogLocation();
+  renderTroveLinkDialogPreview();
   renderMode();
   renderManageList();
   renderDebugCwd();

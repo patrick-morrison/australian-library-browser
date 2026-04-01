@@ -182,6 +182,14 @@
               <h2>Integration Prompt</h2>
               <pre id="plugin-prompt-output" class="plugin-prompt-output"></pre>
             </article>
+            <article class="plugins-card">
+              <h2>Open Trove Links From Text</h2>
+              <p class="message-text">Paste rough notes, article text, or a messy block of research links. The app will extract Trove references and open them all as tabs.</p>
+              <div class="plugins-actions">
+                <button id="trove-link-extractor-button" type="button" class="primary-action">Paste Text</button>
+              </div>
+              <p id="trove-link-extractor-status" class="message-text">Looks for Trove article, work, and search URLs inside unstructured text.</p>
+            </article>
           </div>
         </section>
 
@@ -250,6 +258,24 @@
               <button type="submit" class="primary-action">Create Library</button>
             </div>
           </form>
+        </div>
+
+        <div id="trove-link-dialog" class="project-dialog" hidden>
+          <div id="trove-link-dialog-backdrop" class="project-dialog-backdrop"></div>
+          <div class="project-dialog-card trove-link-dialog-card">
+            <div class="section-title-row">
+              <h2>Open Trove Links</h2>
+            </div>
+            <p class="message-text">Paste unstructured text, research notes, or a published article. Any Trove links found inside will open as new tabs.</p>
+            <label class="project-dialog-label" for="trove-link-dialog-input">Source text</label>
+            <textarea id="trove-link-dialog-input" class="plugins-textarea trove-link-dialog-input" spellcheck="false" placeholder="Paste notes or article text with Trove links here"></textarea>
+            <div id="trove-link-dialog-status" class="message-text">No Trove links found yet.</div>
+            <div id="trove-link-dialog-preview" class="trove-link-dialog-preview empty-state">Paste text to preview extracted Trove links.</div>
+            <div class="project-dialog-actions">
+              <button id="trove-link-dialog-cancel" type="button" class="ghost-button">Cancel</button>
+              <button id="trove-link-dialog-open" type="button" class="primary-action" disabled>Open Tabs</button>
+            </div>
+          </div>
         </div>
       </main>
     </div>

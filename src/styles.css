@@ -1132,6 +1132,47 @@ button.is-acknowledged {
   resize: vertical;
 }
 
+.trove-link-dialog-card {
+  width: min(92vw, 760px);
+  max-width: 760px;
+}
+
+.trove-link-dialog-input {
+  min-height: 220px;
+}
+
+.trove-link-dialog-preview {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(120, 93, 65, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.trove-link-preview-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(120, 93, 65, 0.08);
+}
+
+.trove-link-preview-index {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.trove-link-preview-url {
+  color: var(--ink);
+  font: 12px/1.45 "SFMono-Regular", Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
 .plugins-actions {
   display: flex;
   gap: 10px;
