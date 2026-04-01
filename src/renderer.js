@@ -12,7 +12,7 @@ const state = {
   projectSearches: [],
   savedSearchMenuOpen: false,
   mode: "collect",
-  manageFilter: "all",
+  manageFilter: "saved",
   manageQuery: "",
   manageLayout: "cards",
   manageExpandedKey: "",
@@ -83,6 +83,7 @@ const elements = {
   captureOpenPage: document.getElementById("capture-open-page"),
   captureIgnore: document.getElementById("capture-ignore"),
   captureCollect: document.getElementById("capture-collect"),
+  captureCopyMarkdown: document.getElementById("capture-copy-markdown"),
   captureProgress: document.getElementById("capture-progress"),
   captureImageSection: document.getElementById("capture-image-section"),
   captureImageGallery: document.getElementById("capture-image-gallery"),
@@ -452,6 +453,7 @@ function normalizeComparableUrl(value) {
   try {
     const url = new URL(String(value).trim());
     url.hash = "";
+    url.searchParams.delete("startPos");
     return url.toString();
   } catch {
     return String(value).trim();
@@ -682,6 +684,7 @@ function resetCapturePane(message, kind = "Preview") {
   elements.captureMarkdown.textContent = "";
   elements.captureProgress.hidden = true;
   elements.captureProgress.textContent = "";
+  elements.captureCopyMarkdown.disabled = true;
 }
 
 function renderCapturePane(item, markdown, options = {}) {
@@ -761,6 +764,7 @@ function renderCapturePane(item, markdown, options = {}) {
     elements.captureImageGallery.innerHTML = "";
   }
   elements.captureMarkdown.innerHTML = renderMarkdownHtml(markdown);
+  elements.captureCopyMarkdown.disabled = !String(markdown || "").trim();
   elements.captureEmpty.classList.remove("is-loading");
   elements.captureEmpty.hidden = true;
   elements.captureBody.hidden = false;
@@ -768,7 +772,7 @@ function renderCapturePane(item, markdown, options = {}) {
 
 async function applyImmediatePageFeedback(item, status) {
   const activeTab = getActiveTab();
-  if (!activeTab?.webview?.isConnected || !item) {
+  if (!item) {
     return;
   }
   const urls = [...new Set([item.url, ...(item.aliases || [])].filter(Boolean))];
@@ -776,12 +780,12 @@ async function applyImmediatePageFeedback(item, status) {
     return;
   }
   const script = sourceRegistry.buildImmediateStatusScript({ status, urls });
-  await activeTab.webview.executeJavaScript(script, true).catch(() => {});
+  await safeExecuteJavaScript(activeTab, script, true, null);
 }
 
 async function applyImmediatePageLoading(item, action, active, label = "") {
   const activeTab = getActiveTab();
-  if (!activeTab?.webview?.isConnected || !item) {
+  if (!item) {
     return;
   }
   const urls = [...new Set([item.url, ...(item.aliases || [])].filter(Boolean))];
@@ -789,7 +793,7 @@ async function applyImmediatePageLoading(item, action, active, label = "") {
     return;
   }
   const script = sourceRegistry.buildImmediateLoadingScript({ action, active, label, urls });
-  await activeTab.webview.executeJavaScript(script, true).catch(() => {});
+  await safeExecuteJavaScript(activeTab, script, true, null);
 }
 
 async function handleSaveProgress(progress) {
@@ -1170,6 +1174,25 @@ function isWebviewReady(tab) {
   return Boolean(tab && tab.didDomReady && tab.webview?.isConnected);
 }
 
+async function safeExecuteJavaScript(target, script, userGesture = true, fallbackValue = null) {
+  if (!target) {
+    return fallbackValue;
+  }
+  try {
+    const isTab = Object.prototype.hasOwnProperty.call(target, "webview");
+    const webview = isTab ? target.webview : target;
+    if (!webview?.isConnected) {
+      return fallbackValue;
+    }
+    if (isTab && !isWebviewReady(target)) {
+      return fallbackValue;
+    }
+    return await webview.executeJavaScript(script, userGesture);
+  } catch {
+    return fallbackValue;
+  }
+}
+
 function safeCanGo(tab, direction) {
   if (!isWebviewReady(tab)) {
     return false;
@@ -1225,6 +1248,34 @@ function createTab(url = getDefaultBrowseUrl()) {
 
 function openBackgroundTab(url) {
   return openUrlInTab(url, { activate: false });
+}
+
+function openUrlListInTabs(urls = []) {
+  const normalizedUrls = [...new Set((Array.isArray(urls) ? urls : []).map((value) => ensureUrl(value)).filter(Boolean))];
+  if (!normalizedUrls.length) {
+    return [];
+  }
+
+  const opened = [];
+  const activeTab = getActiveTab();
+  const defaultBrowseUrl = getDefaultBrowseUrl();
+  const canReuseActiveTab =
+    activeTab?.webview &&
+    ensureUrl(activeTab.url || "") === ensureUrl(defaultBrowseUrl) &&
+    String(activeTab.title || "").trim().toLowerCase() === "new tab";
+
+  if (canReuseActiveTab) {
+    activeTab.webview.loadURL(normalizedUrls[0]);
+    opened.push(activeTab);
+  } else {
+    opened.push(createTab(normalizedUrls[0]));
+  }
+
+  for (const url of normalizedUrls.slice(1)) {
+    opened.push(openBackgroundTab(url));
+  }
+
+  return opened;
 }
 
 function openTabFromPayload(payload) {
@@ -1300,7 +1351,7 @@ function installBrowserPageLinkInterceptors(tab) {
     })();
   `;
 
-  void tab.webview.executeJavaScript(script, true).catch(() => {});
+  void safeExecuteJavaScript(tab, script, true, null);
 }
 
 function closeTab(tabId) {
@@ -1436,7 +1487,7 @@ function nudgeWebviewLayout(tab) {
       if (!tab.webview?.isConnected) {
         return;
       }
-      void tab.webview.executeJavaScript(script, true).catch(() => {});
+      void safeExecuteJavaScript(tab, script, true, null);
     }, delay);
   }
 }
@@ -1514,7 +1565,7 @@ function dismissPageObstructions(tab) {
       if (!tab.webview?.isConnected) {
         return;
       }
-      void tab.webview.executeJavaScript(script, true).catch(() => {});
+      void safeExecuteJavaScript(tab, script, true, null);
     }, delay);
   }
 }
@@ -1555,6 +1606,7 @@ function bindWebview(tab) {
   });
 
   tab.webview.addEventListener("did-start-loading", () => {
+    tab.didDomReady = false;
     updateNavigationButtons();
     invalidateTabCaches(tab);
     if (previewState.tabId === tab.id) {
@@ -2001,7 +2053,7 @@ async function applyProjectDecorations() {
       return;
     }
     const payload = sourceRegistry.projectStatePayload(project);
-    await activeTab.webview.executeJavaScript(sourceRegistry.buildDecorationScript(payload), true);
+    await safeExecuteJavaScript(activeTab, sourceRegistry.buildDecorationScript(payload), true, null);
     activeTab.decorationSignature = signature;
   } catch {
     // Ignore pages that reject script execution during navigation.
@@ -2150,7 +2202,7 @@ async function resolveSlwaBridgeUrlFromWebview(webview) {
     })();
   `;
 
-  return webview.executeJavaScript(script, true).catch(() => "");
+  return safeExecuteJavaScript(webview, script, true, "");
 }
 
 async function maybeBridgeCurrentPageItem(item, activeTab) {
@@ -2493,7 +2545,7 @@ async function getCurrentPageHtml() {
   if (!isWebviewReady(activeTab)) {
     throw new Error("Wait for the page to finish loading before dumping HTML.");
   }
-  return activeTab.webview.executeJavaScript("document.documentElement.outerHTML", true);
+  return safeExecuteJavaScript(activeTab, "document.documentElement.outerHTML", true, "");
 }
 
 async function saveCurrentSearchResults() {
@@ -2960,12 +3012,16 @@ elements.captureOpenPage.addEventListener("click", () => {
   if (!item?.url) {
     return;
   }
-  const activeTab = getActiveTab();
-  if (activeTab) {
-    activeTab.webview.loadURL(item.url);
-  } else {
-    createTab(item.url);
+  createTab(item.url);
+});
+
+elements.captureCopyMarkdown.addEventListener("click", async () => {
+  const markdown = getDisplayedMarkdown();
+  if (!String(markdown || "").trim()) {
+    return;
   }
+  await window.troveApi.copyText(markdown);
+  setMessage("Copied markdown preview.");
 });
 
 elements.captureCollect.addEventListener("click", async () => {
@@ -3108,6 +3164,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   window.troveApi.onContextNewTab((payload) => {
     openTabFromPayload(payload);
   });
+  window.troveApi.onCommandOpenTabs((urls) => {
+    openUrlListInTabs(urls);
+  });
   createTab();
   await refreshProjects("");
+  window.troveApi.notifyRendererReady();
 });

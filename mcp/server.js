@@ -2,6 +2,7 @@
 
 const fs = require("fs/promises");
 const path = require("path");
+const { spawn } = require("child_process");
 
 const { McpServer, ResourceTemplate } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
@@ -38,8 +39,8 @@ async function listKnownProjects() {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function readProjectYaml(projectPath) {
-  const raw = await fs.readFile(path.join(projectPath, "project.yaml"), "utf8");
+async function readProjectYaml(project) {
+  const raw = await fs.readFile(path.join(project.path, project.manifestName || "project.yaml"), "utf8");
   return yaml.load(raw) || {};
 }
 
@@ -138,6 +139,22 @@ async function buildProjectsResource() {
     null,
     2
   );
+}
+
+async function openUrlsInBrowserTabs(urls) {
+  const normalizedUrls = [...new Set((Array.isArray(urls) ? urls : []).map((value) => String(value || "").trim()).filter(Boolean))];
+  if (!normalizedUrls.length) {
+    throw new Error("No URLs supplied.");
+  }
+
+  const child = spawn(process.execPath, [path.join(workspaceRoot, "scripts/open-tabs-cli.js"), ...normalizedUrls], {
+    cwd: workspaceRoot,
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
+  child.unref();
+  return normalizedUrls;
 }
 
 async function main() {
@@ -282,6 +299,22 @@ async function main() {
     }
   );
 
+  server.registerTool(
+    "open_urls_in_tabs",
+    {
+      description: "Open one or more URLs as tabs in the Trove Library Browser app. If the app is already running, the tabs are added to that window.",
+      inputSchema: {
+        urls: z.array(z.string()).min(1).describe("One or more absolute http(s) URLs to open in browser tabs.")
+      }
+    },
+    async ({ urls }) => {
+      const opened = await openUrlsInBrowserTabs(urls);
+      return textResult(`Opening ${opened.length} tab${opened.length === 1 ? "" : "s"} in Trove Library Browser.`, {
+        urls: opened
+      });
+    }
+  );
+
   server.registerResource(
     "projects",
     "trovelibrary://projects",
@@ -311,7 +344,7 @@ async function main() {
     },
     async (_uri, variables) => {
       const project = await resolveProject(variables.slug);
-      const manifest = await readProjectYaml(project.path);
+      const manifest = await readProjectYaml(project);
       return {
         contents: [
           {

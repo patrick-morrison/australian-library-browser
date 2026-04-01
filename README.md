@@ -19,7 +19,7 @@ It is built for research capture, not general browsing:
 
 ## What A Library Contains
 
-Each library is a folder ending in `.trovelibrary`.
+Each library is a plain folder with a `.trovelibrary` manifest file inside it.
 
 - `project.yaml`: canonical project state, saved items, ignored items, aliases
 - `items.csv`: flat spreadsheet-friendly inventory
@@ -33,9 +33,8 @@ The intent is preservation: if the source site changes or disappears, the saved 
 ## App Modes
 
 - `Collect`: browse normally, preview the current record, collect or ignore it
-- `Manage`: review saved and ignored records, reopen them in the app, or explicitly open native files
-- `Projects`: create libraries, switch active libraries, inspect activity and source mix
-- `Plugins`: inspect supported sources and generate a prompt / probe command for a new source integration
+- `Library`: switch libraries, reopen saved searches, and review the collection inventory
+- `Settings`: inspect supported sources and generate a prompt / probe command for a new source integration
 
 Most clicks stay inside the app. Native file opens are explicit secondary actions.
 
@@ -76,7 +75,14 @@ Useful commands:
 npm run test:fixtures
 npm run test:e2e
 npm run test:mcp
+npm run open:tabs -- "https://trove.nla.gov.au/newspaper/article/32575438" "https://trove.nla.gov.au/newspaper/article/85178391"
 npm run probe:source -- "https://example-library/search?q=harvey"
+```
+
+You can also pipe pasted URLs into the tab opener:
+
+```bash
+pbpaste | npm run open:tabs
 ```
 
 ## Fixtures And Licensing Hygiene
@@ -114,12 +120,14 @@ Current tools:
 - `read_item_markdown`
 - `search_markdown`
 - `save_project_note`
+- `open_urls_in_tabs`
 
 This is intended for Codex / Claude style workspace assistance:
 
 - inspect and summarize saved markdown
 - search across project inventories
 - add notes and project instructions
+- open pasted live URLs into the app as tabs
 - prepare follow-up work without scraping the live browser state
 
 ## Adding A New Source

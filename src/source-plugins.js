@@ -708,7 +708,7 @@
             return anchor.closest(".search-result-item");
           }
           if (host === "catalogue.slwa.wa.gov.au" || host === "purl.slwa.wa.gov.au") {
-            return anchor.closest(".briefcitDetail, .browseEntry, .bibRecordLink, .viewPanel, .page");
+            return anchor.closest(".briefcitDetail, .browseEntry, .bibRecordLink, tr, li");
           }
           if (host === "museum.wa.gov.au") {
             return anchor.closest(".wrap");
@@ -744,11 +744,15 @@
           if (directStatus) {
             return directStatus;
           }
+          if (!isEntryLink(anchor, href)) {
+            return "";
+          }
           const entryContainer = getEntryContainer(anchor, href);
           if (!entryContainer) {
             return "";
           }
           const linkStatuses = Array.from(entryContainer.querySelectorAll("a[href]"))
+            .filter((node) => isEntryLink(node, node.href))
             .map((node) => resolveStatusForHref(node.href))
             .filter(Boolean);
           return linkStatuses.includes("saved") ? "saved" : linkStatuses.includes("ignored") ? "ignored" : "";
@@ -1039,11 +1043,12 @@
             if (!href) {
               return;
             }
+            const entryLink = isEntryLink(anchor, href);
             const entryStatus = resolveEntryStatus(anchor, href);
-            if (isEntryLink(anchor, href)) {
+            if (entryLink) {
               ensureInlineActions(anchor, href, entryStatus);
             }
-            const entryContainer = getEntryContainer(anchor, href);
+            const entryContainer = entryLink ? getEntryContainer(anchor, href) : null;
             if (entryStatus === "saved") {
               anchor.classList.add("trove-library-saved");
               entryContainer?.classList.add("trove-library-entry-saved");

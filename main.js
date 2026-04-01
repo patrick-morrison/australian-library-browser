@@ -21,6 +21,64 @@ const BROWSER_FETCH_HEADERS = {
   "accept-language": "en-AU,en;q=0.9",
   "upgrade-insecure-requests": "1"
 };
+let mainWindow = null;
+let rendererReady = false;
+let pendingTabUrls = [];
+
+function normalizeIncomingUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return "";
+  }
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    return "";
+  }
+}
+
+function extractIncomingUrls(argv = []) {
+  return [...new Set((Array.isArray(argv) ? argv : []).map(normalizeIncomingUrl).filter(Boolean))];
+}
+
+function queueTabUrls(urls = []) {
+  const nextUrls = extractIncomingUrls(urls);
+  if (!nextUrls.length) {
+    return;
+  }
+  const seen = new Set(pendingTabUrls);
+  for (const url of nextUrls) {
+    if (!seen.has(url)) {
+      pendingTabUrls.push(url);
+      seen.add(url);
+    }
+  }
+}
+
+function flushPendingTabUrls() {
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady || !pendingTabUrls.length) {
+    return;
+  }
+  const urls = pendingTabUrls.splice(0, pendingTabUrls.length);
+  mainWindow.webContents.send("command:open-tabs", urls);
+}
+
+const singleInstanceLock = app.requestSingleInstanceLock();
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  queueTabUrls(process.argv.slice(1));
+  app.on("second-instance", (_event, argv) => {
+    queueTabUrls(argv.slice(1));
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+    }
+    flushPendingTabUrls();
+  });
+}
 
 async function listKnownProjects() {
   const directories = [workspaceRoot, ...(await libraryRegistry.readLibraryDirectories())];
@@ -473,6 +531,9 @@ function installWebContentsContextMenus(mainWindow) {
 }
 
 app.whenReady().then(() => {
+  if (!singleInstanceLock) {
+    return;
+  }
   ipcMain.handle("projects:list", async () => listKnownProjects());
   ipcMain.handle("projects:create", async (_event, targetDir, name) => {
     const baseDir = targetDir || workspaceRoot;
@@ -566,13 +627,29 @@ app.whenReady().then(() => {
     clipboard.writeText(String(value || ""));
     return true;
   });
+  ipcMain.on("renderer:ready", () => {
+    rendererReady = true;
+    flushPendingTabUrls();
+  });
 
-  const mainWindow = createWindow();
+  mainWindow = createWindow();
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+    rendererReady = false;
+  });
   installWebContentsContextMenus(mainWindow);
+  mainWindow.webContents.on("did-finish-load", () => {
+    flushPendingTabUrls();
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      mainWindow = createWindow();
+      rendererReady = false;
+      installWebContentsContextMenus(mainWindow);
+      mainWindow.webContents.on("did-finish-load", () => {
+        flushPendingTabUrls();
+      });
     }
   });
 });

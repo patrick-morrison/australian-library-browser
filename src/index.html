@@ -78,7 +78,12 @@
               <div id="capture-image-gallery" class="capture-image-gallery"></div>
             </section>
             <section class="capture-section">
-              <div id="capture-markdown" class="capture-markdown"></div>
+              <div class="capture-markdown-wrap">
+                <button id="capture-copy-markdown" type="button" class="capture-copy-markdown" aria-label="Copy markdown preview" title="Copy markdown preview">
+                  ⧉
+                </button>
+                <div id="capture-markdown" class="capture-markdown"></div>
+              </div>
             </section>
           </div>
         </section>
@@ -141,8 +146,8 @@
                 spellcheck="false"
               >
               <div class="manage-filter" role="tablist" aria-label="Inventory filter">
-                <button id="filter-all" type="button" class="filter-button is-active" data-filter="all">All</button>
-                <button id="filter-saved" type="button" class="filter-button" data-filter="saved">Collected</button>
+                <button id="filter-all" type="button" class="filter-button" data-filter="all">All</button>
+                <button id="filter-saved" type="button" class="filter-button is-active" data-filter="saved">Collected</button>
                 <button id="filter-ignored" type="button" class="filter-button" data-filter="ignored">Ignored</button>
                 <button id="filter-uncollected" type="button" class="filter-button" data-filter="uncollected">Uncollected</button>
               </div>

@@ -20,10 +20,14 @@ contextBridge.exposeInMainWorld("troveApi", {
   openPath: (targetPath) => ipcRenderer.invoke("shell:open-path", targetPath),
   readTextFile: (targetPath) => ipcRenderer.invoke("files:read-text", targetPath),
   copyText: (value) => ipcRenderer.invoke("clipboard:write-text", value),
+  notifyRendererReady: () => ipcRenderer.send("renderer:ready"),
   onSaveProgress: (callback) => {
     ipcRenderer.on("projects:save-progress", (_event, payload) => callback(payload));
   },
   onContextNewTab: (callback) => {
     ipcRenderer.on("context:new-tab", (_event, payload) => callback(payload));
+  },
+  onCommandOpenTabs: (callback) => {
+    ipcRenderer.on("command:open-tabs", (_event, payload) => callback(payload));
   }
 });
