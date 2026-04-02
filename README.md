@@ -1,6 +1,6 @@
 # The Australian Library Browser
 
-Desktop app for collecting material from Trove, SLWA and the WA Museum into self-describing research libraries on disk.
+Desktop app for collecting material from Trove and SLWA into self-describing research libraries on disk.
 
 Built on April 1-2, 2026 as an experiment in spinning up a custom research browser. It is vibe-coded, so do not expect my usual standard. The tyres have been kicked, but use it at your own risk. I am writing the history of Wellington Dam, and this was built to speed up and improve the workflow for handling primary research notes.
 
@@ -14,15 +14,15 @@ Search live on Trove or SLWA, save the search, and work through results with inl
 
 Preview a record before collecting it, with the extracted text or image shown in the side pane.
 
-![Library finder](docs/screenshots/library-finder.jpeg)
+![Library finder](docs/screenshots/library.jpeg)
 
 Collect or ignore as you go. Decisions stay attached to records when they turn up again in later searches.
 
 ![Ignoring](docs/screenshots/ignoring.jpeg)
 
-Work back through the local library on disk, reopen saved searches, and inspect what has already been collected.
+Work back through the local library, reopen saved searches, and inspect what has already been collected. In the end, it is all markdown and images in a folder on your local computer.
 
-![Library](docs/screenshots/library.jpeg)
+![Library](docs/screenshots/library-finder.jpeg)
 
 Paste research notes full of Trove or SLWA links, extract the URLs, and open unresolved ones for triage.
 
@@ -38,7 +38,6 @@ Supported sources:
 
 - `Trove`
 - `SLWA`
-- `WA Museum` Maritime Archaeology Databases
 
 Each library is a normal folder with a `.trovelibrary` manifest inside it.
 
@@ -81,7 +80,12 @@ npm run test:fixtures
 npm run test:e2e:smoke
 npm run test:mcp
 npm run dist
+npm run dist:mac
+npm run dist:linux
+npm run dist:win
 ```
+
+Releases for macOS, Linux and Windows are built in GitHub Actions when a tag like `v1.0.0` is pushed. Local `npm run dist` is still just the current host build.
 
 Open tabs from the CLI:
 

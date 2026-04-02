@@ -11,6 +11,9 @@
     "dev": "env -u ELECTRON_RUN_AS_NODE electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac dir zip",
+    "dist:linux": "electron-builder --linux AppImage tar.gz",
+    "dist:win": "electron-builder --win nsis zip",
     "mcp:start": "node mcp/server.js",
     "test:mcp": "node scripts/test-mcp.js",
     "test:store": "node scripts/test-project-store-edge-cases.js",
@@ -62,6 +65,19 @@
       "category": "public.app-category.productivity",
       "target": [
         "dir",
+        "zip"
+      ]
+    },
+    "linux": {
+      "category": "Office",
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
         "zip"
       ]
     }
