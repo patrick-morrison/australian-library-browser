@@ -1,6 +1,6 @@
 {
   "name": "australian-library-browser",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Collect material from Australian collections into self-describing research libraries.",
   "author": "Patrick Morrison",
   "private": true,
@@ -11,9 +11,9 @@
     "dev": "env -u ELECTRON_RUN_AS_NODE electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac dir zip",
-    "dist:linux": "electron-builder --linux AppImage tar.gz",
-    "dist:win": "electron-builder --win nsis zip",
+    "dist:mac": "electron-builder --mac zip",
+    "dist:linux": "electron-builder --linux AppImage",
+    "dist:win": "electron-builder --win nsis",
     "mcp:start": "node mcp/server.js",
     "test:mcp": "node scripts/test-mcp.js",
     "test:store": "node scripts/test-project-store-edge-cases.js",
@@ -63,22 +63,22 @@
     "asar": true,
     "mac": {
       "category": "public.app-category.productivity",
+      "artifactName": "australian-library-browser-${version}-mac-${arch}.${ext}",
       "target": [
-        "dir",
         "zip"
       ]
     },
     "linux": {
       "category": "Office",
+      "artifactName": "australian-library-browser-${version}-linux.${ext}",
       "target": [
-        "AppImage",
-        "tar.gz"
+        "AppImage"
       ]
     },
     "win": {
+      "artifactName": "australian-library-browser-${version}-windows.${ext}",
       "target": [
-        "nsis",
-        "zip"
+        "nsis"
       ]
     }
   }

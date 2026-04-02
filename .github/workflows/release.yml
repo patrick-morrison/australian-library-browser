@@ -20,12 +20,15 @@ jobs:
           - os: macos-14
             build_script: dist:mac
             artifact_name: release-macos
+            upload_glob: dist/australian-library-browser-*-mac-*.zip
           - os: ubuntu-latest
             build_script: dist:linux
             artifact_name: release-linux
+            upload_glob: dist/australian-library-browser-*-linux.AppImage
           - os: windows-latest
             build_script: dist:win
             artifact_name: release-windows
+            upload_glob: dist/australian-library-browser-*-windows.exe
 
     runs-on: ${{ matrix.os }}
 
@@ -58,11 +61,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: |
-            dist/*.zip
-            dist/*.exe
-            dist/*.AppImage
-            dist/*.tar.gz
+          path: ${{ matrix.upload_glob }}
           if-no-files-found: error
 
   publish:
