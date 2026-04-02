@@ -7,8 +7,6 @@ Run it either way:
 - packaged builds: [GitHub Releases](https://github.com/patrick-morrison/australian-library-browser/releases)
 - from source: `npm install` then `npm start`
 
-On the release page, the only files most people need are the Mac zip, the Linux AppImage, or the Windows installer.
-
 Built on April 1-2, 2026 as an experiment in spinning up a custom research browser. It is vibe-coded, so do not expect my usual standard. The tyres have been kicked, but use it at your own risk. I am writing the history of Wellington Dam, and this was built to speed up and improve the workflow for handling primary research notes.
 
 The point of it is simple: save full-resolution images and markdown into a local library, keep the primary record on disk, and make that material searchable, summarizable, and cross-referenceable with help from Codex or Claude Code.
@@ -88,11 +86,7 @@ npm run test:e2e:smoke
 npm run test:mcp
 npm run dist
 npm run dist:mac
-npm run dist:linux
-npm run dist:win
 ```
-
-Releases for macOS, Linux and Windows are built in GitHub Actions when a tag like `v1.0.0` is pushed. Local `npm run dist` is still just the current host build.
 
 Open tabs from the CLI:
 

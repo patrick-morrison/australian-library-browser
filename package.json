@@ -12,8 +12,6 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac zip",
-    "dist:linux": "electron-builder --linux AppImage",
-    "dist:win": "electron-builder --win nsis",
     "mcp:start": "node mcp/server.js",
     "test:mcp": "node scripts/test-mcp.js",
     "test:store": "node scripts/test-project-store-edge-cases.js",
@@ -66,19 +64,6 @@
       "artifactName": "australian-library-browser-${version}-mac-${arch}.${ext}",
       "target": [
         "zip"
-      ]
-    },
-    "linux": {
-      "category": "Office",
-      "artifactName": "australian-library-browser-${version}-linux.${ext}",
-      "target": [
-        "AppImage"
-      ]
-    },
-    "win": {
-      "artifactName": "australian-library-browser-${version}-windows.${ext}",
-      "target": [
-        "nsis"
       ]
     }
   }
