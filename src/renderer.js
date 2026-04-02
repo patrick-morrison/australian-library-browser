@@ -2280,7 +2280,7 @@ function getPluginSeedUrls() {
 
 function buildPluginPrompt(urls) {
   const seeds = urls.length ? urls.map((url) => `- ${url}`).join("\n") : "- https://example-library/search?q=wellington+dam";
-  return `Use the trove-browser repo to reverse engineer a new collection source integration.
+  return `Use the australian-library-browser repo to reverse engineer a new collection source integration.
 
 Source URLs:
 ${seeds}

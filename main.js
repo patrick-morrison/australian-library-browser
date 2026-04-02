@@ -11,11 +11,13 @@ const sourceAdapters = require("./lib/source-adapters");
 
 const workspaceRoot = process.cwd();
 const execAsync = promisify(exec);
-const customUserDataDir = String(process.env.TROVE_BROWSER_USER_DATA_DIR || "").trim();
+const customUserDataDir = String(
+  process.env.AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR || process.env.TROVE_BROWSER_USER_DATA_DIR || ""
+).trim();
 if (customUserDataDir) {
   app.setPath("userData", path.resolve(customUserDataDir));
 }
-if (process.env.TROVE_BROWSER_DISABLE_GPU === "1") {
+if (process.env.AUSTRALIAN_LIBRARY_BROWSER_DISABLE_GPU === "1" || process.env.TROVE_BROWSER_DISABLE_GPU === "1") {
   app.disableHardwareAcceleration();
 }
 const WEBVIEW_PARTITION = "persist:trove-library";
@@ -70,7 +72,9 @@ function flushPendingTabUrls() {
   mainWindow.webContents.send("command:open-tabs", urls);
 }
 
-const disableSingleInstance = process.env.TROVE_BROWSER_DISABLE_SINGLE_INSTANCE === "1";
+const disableSingleInstance =
+  process.env.AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE === "1" ||
+  process.env.TROVE_BROWSER_DISABLE_SINGLE_INSTANCE === "1";
 let hasSingleInstanceLock = true;
 if (!disableSingleInstance) {
   const singleInstanceLock = app.requestSingleInstanceLock();
@@ -120,7 +124,7 @@ function createWindow() {
     minWidth: 1180,
     minHeight: 760,
     backgroundColor: "#efe3d0",
-    title: "Trove Library Browser",
+    title: "The Australian Library Browser",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

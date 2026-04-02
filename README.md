@@ -1,6 +1,8 @@
-# Trove Browser
+# The Australian Library Browser
 
-Trove Browser is a focused Electron app for triaging online collection sites into self-describing `.trovelibrary` folders.
+The Australian Library Browser is a focused Electron app for triaging online collection sites into self-describing `.trovelibrary` folders.
+
+Local-first capture for Australian collections.
 
 It is built for research capture, not general browsing:
 

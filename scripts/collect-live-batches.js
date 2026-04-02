@@ -17,7 +17,7 @@ const USER_AGENT =
 async function createBatchProjects() {
   const rootDir =
     batchRoot ||
-    (await fs.mkdtemp(path.join(os.tmpdir(), "trove-browser-batch-")));
+    (await fs.mkdtemp(path.join(os.tmpdir(), "australian-library-browser-batch-")));
   return {
     rootDir,
     museum: await projectStore.createProject(rootDir, `Batavia Objects WA Museum ${Date.now()}`),

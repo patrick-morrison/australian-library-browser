@@ -49,7 +49,7 @@ async function main() {
   });
   child.unref();
 
-  process.stdout.write(`Opening ${urls.length} tab${urls.length === 1 ? "" : "s"} in Trove Library Browser.\n`);
+  process.stdout.write(`Opening ${urls.length} tab${urls.length === 1 ? "" : "s"} in The Australian Library Browser.\n`);
 }
 
 main().catch((error) => {

@@ -16,7 +16,7 @@ async function main() {
   const projectName = `MCP Smoke ${Date.now()}`;
   const client = new Client(
     {
-      name: "trove-browser-mcp-smoke",
+      name: "australian-library-browser-mcp-smoke",
       version: "0.1.0"
     },
     {
@@ -29,7 +29,7 @@ async function main() {
     cwd: repoRoot,
     env: {
       ...process.env,
-      TROVE_BROWSER_REGISTRY_PATH: registryPath
+      AUSTRALIAN_LIBRARY_BROWSER_REGISTRY_PATH: registryPath
     },
     stderr: "pipe"
   });

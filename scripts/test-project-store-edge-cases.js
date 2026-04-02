@@ -196,7 +196,7 @@ async function testResaveClearsUncollectedEntry(rootDir) {
 }
 
 async function main() {
-  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "trove-browser-store-"));
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "australian-library-browser-store-"));
   try {
     await testDuplicateNewspaperSave(rootDir);
     await testDuplicateImageSave(rootDir);

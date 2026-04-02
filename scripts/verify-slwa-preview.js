@@ -12,7 +12,7 @@ async function main() {
   const electronBinary = require("electron");
   const projectName = `Preview Verify ${Date.now()}`;
   const projectFolder = path.join(repoRoot, `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.trovelibrary`);
-  const userDataDir = path.join(os.tmpdir(), `trove-browser-verify-${process.pid}-${Date.now()}`);
+  const userDataDir = path.join(os.tmpdir(), `australian-library-browser-verify-${process.pid}-${Date.now()}`);
   let app;
 
   try {
@@ -23,8 +23,8 @@ async function main() {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "",
-        TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
-        TROVE_BROWSER_USER_DATA_DIR: userDataDir
+        AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+        AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR: userDataDir
       }
     });
 

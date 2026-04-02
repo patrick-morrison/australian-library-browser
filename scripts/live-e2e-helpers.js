@@ -24,7 +24,7 @@ async function ensureScreenshotDir() {
 
 async function launchApp() {
   const electronBinary = require("electron");
-  const userDataDir = path.join(os.tmpdir(), `trove-browser-e2e-${process.pid}-${Date.now()}`);
+  const userDataDir = path.join(os.tmpdir(), `australian-library-browser-e2e-${process.pid}-${Date.now()}`);
   return electron.launch({
     executablePath: electronBinary,
     args: [repoRoot],
@@ -32,9 +32,9 @@ async function launchApp() {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "",
-      TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
-      TROVE_BROWSER_DISABLE_GPU: "1",
-      TROVE_BROWSER_USER_DATA_DIR: userDataDir
+      AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+      AUSTRALIAN_LIBRARY_BROWSER_DISABLE_GPU: "1",
+      AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR: userDataDir
     }
   });
 }

@@ -302,14 +302,14 @@ async function main() {
   server.registerTool(
     "open_urls_in_tabs",
     {
-      description: "Open one or more URLs as tabs in the Trove Library Browser app. If the app is already running, the tabs are added to that window.",
+      description: "Open one or more URLs as tabs in The Australian Library Browser app. If the app is already running, the tabs are added to that window.",
       inputSchema: {
         urls: z.array(z.string()).min(1).describe("One or more absolute http(s) URLs to open in browser tabs.")
       }
     },
     async ({ urls }) => {
       const opened = await openUrlsInBrowserTabs(urls);
-      return textResult(`Opening ${opened.length} tab${opened.length === 1 ? "" : "s"} in Trove Library Browser.`, {
+      return textResult(`Opening ${opened.length} tab${opened.length === 1 ? "" : "s"} in The Australian Library Browser.`, {
         urls: opened
       });
     }

@@ -1,5 +1,5 @@
 {
-  "name": "trove-browser",
+  "name": "australian-library-browser",
   "version": "0.1.0",
   "description": "A focused Electron browser for triaging online collections into self-describing research libraries.",
   "private": true,
@@ -39,8 +39,8 @@
     "playwright": "^1.52.0"
   },
   "build": {
-    "appId": "au.patrickmorrison.trovebrowser",
-    "productName": "Trove Library Browser",
+    "appId": "au.patrickmorrison.australianlibrarybrowser",
+    "productName": "The Australian Library Browser",
     "directories": {
       "output": "dist"
     },

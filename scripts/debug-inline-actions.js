@@ -13,7 +13,7 @@ async function main() {
   }
 
   const electronBinary = require("electron");
-  const userDataDir = path.join(os.tmpdir(), `trove-browser-inline-debug-${process.pid}-${Date.now()}`);
+  const userDataDir = path.join(os.tmpdir(), `australian-library-browser-inline-debug-${process.pid}-${Date.now()}`);
   const app = await electron.launch({
     executablePath: electronBinary,
     args: [repoRoot],
@@ -21,8 +21,8 @@ async function main() {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "",
-      TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
-      TROVE_BROWSER_USER_DATA_DIR: userDataDir
+      AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+      AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR: userDataDir
     }
   });
 
