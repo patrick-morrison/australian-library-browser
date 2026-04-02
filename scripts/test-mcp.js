@@ -44,7 +44,16 @@ async function main() {
 
     const tools = await client.listTools();
     const toolNames = tools.tools.map((tool) => tool.name);
-    for (const required of ["list_projects", "create_project", "get_project_inventory", "read_item_markdown", "search_markdown", "save_project_note", "open_urls_in_tabs"]) {
+    for (const required of [
+      "list_projects",
+      "create_project",
+      "get_project_inventory",
+      "read_item_markdown",
+      "search_markdown",
+      "save_project_note",
+      "open_urls_in_tabs",
+      "open_search_queries_in_tabs"
+    ]) {
       if (!toolNames.includes(required)) {
         throw new Error(`Missing MCP tool: ${required}`);
       }

@@ -33,6 +33,17 @@ const BROWSER_FETCH_HEADERS = {
 let mainWindow = null;
 let rendererReady = false;
 let pendingTabUrls = [];
+const MIN_WEBCONTENTS_LISTENER_LIMIT = 64;
+
+function ensureWebContentsListenerCapacity(contents) {
+  if (!contents || typeof contents.getMaxListeners !== "function" || typeof contents.setMaxListeners !== "function") {
+    return;
+  }
+  const currentMax = Number(contents.getMaxListeners()) || 0;
+  if (currentMax !== 0 && currentMax < MIN_WEBCONTENTS_LISTENER_LIMIT) {
+    contents.setMaxListeners(MIN_WEBCONTENTS_LISTENER_LIMIT);
+  }
+}
 
 function normalizeIncomingUrl(value) {
   const trimmed = String(value || "").trim();
@@ -477,6 +488,7 @@ function installWebContentsContextMenus(mainWindow) {
   }
   app.__troveLibraryContextMenusInstalled = true;
   app.on("web-contents-created", (_event, contents) => {
+    ensureWebContentsListenerCapacity(contents);
     if (typeof contents.setWindowOpenHandler === "function") {
       contents.setWindowOpenHandler((details) => {
         mainWindow.webContents.send("context:new-tab", {
@@ -651,6 +663,7 @@ app.whenReady().then(() => {
   });
 
   mainWindow = createWindow();
+  ensureWebContentsListenerCapacity(mainWindow.webContents);
   mainWindow.on("closed", () => {
     mainWindow = null;
     rendererReady = false;
@@ -664,6 +677,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createWindow();
       rendererReady = false;
+      ensureWebContentsListenerCapacity(mainWindow.webContents);
       installWebContentsContextMenus(mainWindow);
       mainWindow.webContents.on("did-finish-load", () => {
         flushPendingTabUrls();

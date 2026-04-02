@@ -125,6 +125,25 @@ function textResult(text, structuredContent = undefined) {
   };
 }
 
+function buildTroveSearchUrl(query) {
+  const cleaned = String(query || "").trim();
+  return cleaned ? `https://trove.nla.gov.au/search?keyword=${encodeURIComponent(cleaned)}` : "";
+}
+
+function buildSlwaSearchUrl(query) {
+  const cleaned = String(query || "").trim();
+  return cleaned
+    ? `https://encore.slwa.wa.gov.au/iii/encore/search/C__S${encodeURIComponent(cleaned)}__Orightresult__U?lang=eng&suite=def`
+    : "";
+}
+
+function buildSearchUrl(source, query) {
+  if (source === "slwa") {
+    return buildSlwaSearchUrl(query);
+  }
+  return buildTroveSearchUrl(query);
+}
+
 async function buildProjectsResource() {
   const projects = await listKnownProjects();
   return JSON.stringify(
@@ -312,6 +331,34 @@ async function main() {
       return textResult(`Opening ${opened.length} tab${opened.length === 1 ? "" : "s"} in The Australian Library Browser.`, {
         urls: opened
       });
+    }
+  );
+
+  server.registerTool(
+    "open_search_queries_in_tabs",
+    {
+      description:
+        "Turn one or more follow-up research queries into live search-result tabs in The Australian Library Browser. Use this after reviewing a library and deciding what to search next.",
+      inputSchema: {
+        source: z.enum(["trove", "slwa"]).optional().describe("Which collection search to open. Defaults to trove."),
+        queries: z.array(z.string()).min(1).describe("One or more plain-language search queries to turn into live search tabs.")
+      }
+    },
+    async ({ source = "trove", queries }) => {
+      const normalizedQueries = [...new Set((Array.isArray(queries) ? queries : []).map((value) => String(value || "").trim()).filter(Boolean))];
+      if (!normalizedQueries.length) {
+        throw new Error("No search queries supplied.");
+      }
+      const urls = normalizedQueries.map((query) => buildSearchUrl(source, query)).filter(Boolean);
+      const opened = await openUrlsInBrowserTabs(urls);
+      return textResult(
+        `Opening ${opened.length} ${source.toUpperCase()} search tab${opened.length === 1 ? "" : "s"} for ${normalizedQueries.length} quer${normalizedQueries.length === 1 ? "y" : "ies"}.`,
+        {
+          source,
+          queries: normalizedQueries,
+          urls: opened
+        }
+      );
     }
   );
 

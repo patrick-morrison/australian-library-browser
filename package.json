@@ -1,7 +1,8 @@
 {
   "name": "australian-library-browser",
-  "version": "0.1.0",
-  "description": "A focused Electron browser for triaging online collections into self-describing research libraries.",
+  "version": "1.0.0",
+  "description": "Collect material from Australian collections into self-describing research libraries.",
+  "author": "Patrick Morrison",
   "private": true,
   "license": "UNLICENSED",
   "main": "main.js",
@@ -41,6 +42,7 @@
   "build": {
     "appId": "au.patrickmorrison.australianlibrarybrowser",
     "productName": "The Australian Library Browser",
+    "icon": "logo.png",
     "directories": {
       "output": "dist"
     },
