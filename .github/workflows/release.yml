@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     strategy:
@@ -31,14 +34,20 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
 
       - run: npm ci
+
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - if: runner.os != 'Linux'
+        run: npx playwright install chromium
 
       - run: npm run test:fixtures
 
@@ -51,6 +60,7 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: |
             dist/*.zip
+            dist/*.exe
             dist/*.AppImage
             dist/*.tar.gz
           if-no-files-found: error
