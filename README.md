@@ -8,9 +8,15 @@ The point of it is simple: save full-resolution images and markdown into a local
 
 ## Screenshots
 
+Collect view. Search live, preview a record, then collect or ignore it while the decision stays attached to later search passes.
+
 ![Collect view](docs/screenshots/collect.png)
 
+Library view. Reopen saved searches, inspect what has already been collected, and work back through the local library on disk.
+
 ![Library view](docs/screenshots/library.png)
+
+Paste links dialog. Paste research notes full of Trove or SLWA links, see what is already collected or ignored, and open the unresolved ones for triage.
 
 ![Paste links dialog](docs/screenshots/paste-links.png)
 
