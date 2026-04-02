@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
 const fs = require("fs/promises");
+const os = require("os");
 const path = require("path");
 const { _electron: electron } = require("playwright");
 
 const repoRoot = path.resolve(__dirname, "..");
+const screenshotDir = path.join(repoRoot, "tmp", "e2e-live");
 
 function slugify(value) {
   return String(value || "")
@@ -19,7 +21,19 @@ async function main() {
   const projectName = `Playwright Smoke ${Date.now()}`;
   const projectFolderName = slugify(projectName);
   const projectFolder = path.join(repoRoot, projectFolderName);
+  const userDataDir = path.join(os.tmpdir(), `trove-browser-smoke-${process.pid}-${Date.now()}`);
   let app;
+
+  async function ensureScreenshotDir() {
+    await fs.mkdir(screenshotDir, { recursive: true });
+  }
+
+  async function screenshot(page, name) {
+    await ensureScreenshotDir();
+    const shot = path.join(screenshotDir, name);
+    await page.screenshot({ path: shot, fullPage: false });
+    return shot;
+  }
 
   async function navigate(page, targetUrl) {
     await page.evaluate((url) => {
@@ -40,7 +54,9 @@ async function main() {
       cwd: repoRoot,
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: ""
+        ELECTRON_RUN_AS_NODE: "",
+        TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+        TROVE_BROWSER_USER_DATA_DIR: userDataDir
       }
     });
 
@@ -70,6 +86,7 @@ async function main() {
       const text = document.querySelector("#capture-empty")?.textContent || "";
       return text.includes("not supported") || text.includes("Browse normally");
     }, null, { timeout: 20000 });
+    const unsupportedShot = await screenshot(page, "smoke-unsupported-page.png");
 
     await navigate(page, "https://trove.nla.gov.au/newspaper/article/58768300");
     await page.waitForFunction(() => !document.querySelector("#capture-body")?.hasAttribute("hidden"), null, { timeout: 45000 });
@@ -77,6 +94,7 @@ async function main() {
       const markdown = document.querySelector("#capture-markdown")?.textContent || "";
       return markdown.includes("Link: https://trove.nla.gov.au/newspaper/article/58768300");
     }, null, { timeout: 15000 });
+    const previewShot = await screenshot(page, "smoke-trove-preview.png");
 
     await page.evaluate(() => {
       const button = document.querySelector("#debug-toggle");
@@ -97,9 +115,19 @@ async function main() {
 
     console.log("Electron smoke test passed.");
     console.log(`Created project during test: ${path.basename(projectFolder)}`);
+    console.log(
+      JSON.stringify(
+        {
+          screenshots: [unsupportedShot, previewShot]
+        },
+        null,
+        2
+      )
+    );
   } finally {
     await app?.close().catch(() => {});
     await fs.rm(projectFolder, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(userDataDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

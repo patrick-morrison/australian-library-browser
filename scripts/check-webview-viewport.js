@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+const os = require("os");
+const path = require("path");
 const { _electron: electron } = require("playwright");
 
 async function loadUrl(page, targetUrl) {
@@ -33,13 +35,16 @@ async function loadUrl(page, targetUrl) {
 
 async function main() {
   const electronBinary = require("electron");
+  const userDataDir = path.join(os.tmpdir(), `trove-browser-viewport-${process.pid}-${Date.now()}`);
   const app = await electron.launch({
     executablePath: electronBinary,
     args: [process.cwd()],
     cwd: process.cwd(),
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: ""
+      ELECTRON_RUN_AS_NODE: "",
+      TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+      TROVE_BROWSER_USER_DATA_DIR: userDataDir
     }
   });
   const page = await app.firstWindow();

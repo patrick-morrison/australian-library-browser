@@ -71,6 +71,7 @@ async function run() {
       const button = document.querySelector("#capture-ignore");
       return Boolean(button && /Unignore/i.test(button.textContent || ""));
     }, null, { timeout: 120000 });
+    const ignoredShot = await screenshot(page, "workflow-wellington-ignored.png");
 
     manifest = await waitForManifest(
       project.projectDir,
@@ -85,6 +86,7 @@ async function run() {
     await confirmDialog(page);
     await clickSidebarCollect(page);
     await waitForSidebarCollectState(page, "Collect", 120000);
+    const uncollectedShot = await screenshot(page, "workflow-wellington-uncollected.png");
 
     manifest = await waitForManifest(
       project.projectDir,
@@ -128,7 +130,7 @@ async function run() {
           savedCount: manifest.saved.length,
           ignoredCount: manifest.ignored.length,
           uncollectedCount: manifest.uncollected.length,
-          screenshot: manageShot
+          screenshots: [ignoredShot, uncollectedShot, manageShot]
         },
         null,
         2

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const path = require("path");
+const os = require("os");
 const fs = require("fs/promises");
 const { _electron: electron } = require("playwright");
 
@@ -11,6 +12,7 @@ async function main() {
   const electronBinary = require("electron");
   const projectName = `Preview Verify ${Date.now()}`;
   const projectFolder = path.join(repoRoot, `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.trovelibrary`);
+  const userDataDir = path.join(os.tmpdir(), `trove-browser-verify-${process.pid}-${Date.now()}`);
   let app;
 
   try {
@@ -20,7 +22,9 @@ async function main() {
       cwd: repoRoot,
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: ""
+        ELECTRON_RUN_AS_NODE: "",
+        TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+        TROVE_BROWSER_USER_DATA_DIR: userDataDir
       }
     });
 
@@ -77,6 +81,7 @@ async function main() {
   } finally {
     await app?.close().catch(() => {});
     await fs.rm(projectFolder, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(userDataDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

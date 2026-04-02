@@ -11,6 +11,10 @@ const sourceAdapters = require("./lib/source-adapters");
 
 const workspaceRoot = process.cwd();
 const execAsync = promisify(exec);
+const customUserDataDir = String(process.env.TROVE_BROWSER_USER_DATA_DIR || "").trim();
+if (customUserDataDir) {
+  app.setPath("userData", path.resolve(customUserDataDir));
+}
 const WEBVIEW_PARTITION = "persist:trove-library";
 const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
@@ -63,21 +67,28 @@ function flushPendingTabUrls() {
   mainWindow.webContents.send("command:open-tabs", urls);
 }
 
-const singleInstanceLock = app.requestSingleInstanceLock();
-if (!singleInstanceLock) {
-  app.quit();
+const disableSingleInstance = process.env.TROVE_BROWSER_DISABLE_SINGLE_INSTANCE === "1";
+let hasSingleInstanceLock = true;
+if (!disableSingleInstance) {
+  const singleInstanceLock = app.requestSingleInstanceLock();
+  hasSingleInstanceLock = singleInstanceLock;
+  if (!singleInstanceLock) {
+    app.quit();
+  } else {
+    queueTabUrls(process.argv.slice(1));
+    app.on("second-instance", (_event, argv) => {
+      queueTabUrls(argv.slice(1));
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.focus();
+      }
+      flushPendingTabUrls();
+    });
+  }
 } else {
   queueTabUrls(process.argv.slice(1));
-  app.on("second-instance", (_event, argv) => {
-    queueTabUrls(argv.slice(1));
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      mainWindow.focus();
-    }
-    flushPendingTabUrls();
-  });
 }
 
 async function listKnownProjects() {
@@ -531,7 +542,7 @@ function installWebContentsContextMenus(mainWindow) {
 }
 
 app.whenReady().then(() => {
-  if (!singleInstanceLock) {
+  if (!hasSingleInstanceLock) {
     return;
   }
   ipcMain.handle("projects:list", async () => listKnownProjects());

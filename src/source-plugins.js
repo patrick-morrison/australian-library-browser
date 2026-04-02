@@ -928,13 +928,21 @@
         const emit = (payload) => {
           console.log(actionPrefix + JSON.stringify(payload));
         };
-        const beginInlineLoading = (button, label) => {
+        const beginInlineLoading = (url, action, button, label) => {
           if (!button) {
             return;
+          }
+          const normalizedUrl = normalize(url);
+          const currentState = window[stateKey] || (window[stateKey] = {});
+          const loadingByUrl = { ...(currentState.loadingByUrl || {}) };
+          if (normalizedUrl) {
+            loadingByUrl[normalizedUrl] = { action, label };
+            currentState.loadingByUrl = loadingByUrl;
           }
           button.classList.add("is-loading");
           button.disabled = true;
           button.textContent = label;
+          currentState.apply?.();
         };
         const ensureInlineActions = (anchor, href, forcedStatus = "") => {
           const entryStatus = forcedStatus || resolveEntryStatus(anchor, href);
@@ -1004,7 +1012,7 @@
           preview.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            beginInlineLoading(preview, "Previewing…");
+            beginInlineLoading(href, "preview", preview, "Previewing…");
             emit({ action: "preview-link", url: href, label: anchor.textContent.trim() });
           });
           const collect = document.createElement("button");
@@ -1014,7 +1022,12 @@
           collect.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            beginInlineLoading(collect, collect.classList.contains("saved") ? "Removing…" : "Collecting…");
+            beginInlineLoading(
+              href,
+              collect.classList.contains("saved") ? "uncollect" : "collect",
+              collect,
+              collect.classList.contains("saved") ? "Removing…" : "Collecting…"
+            );
             emit({ action: "collect-link", url: href, label: anchor.textContent.trim() });
           });
           const ignore = document.createElement("button");
@@ -1024,7 +1037,12 @@
           ignore.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            beginInlineLoading(ignore, ignore.classList.contains("ignored") ? "Unignoring…" : "Ignoring…");
+            beginInlineLoading(
+              href,
+              ignore.classList.contains("ignored") ? "unignore" : "ignore",
+              ignore,
+              ignore.classList.contains("ignored") ? "Unignoring…" : "Ignoring…"
+            );
             emit({ action: "ignore-link", url: href, label: anchor.textContent.trim() });
           });
           controls.append(preview, collect, ignore);
@@ -1137,11 +1155,13 @@
         const ignoredUrls = new Set((pageState.ignoredUrls || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const savedMatchKeys = new Set((pageState.savedMatchKeys || []).filter(Boolean));
         const ignoredMatchKeys = new Set((pageState.ignoredMatchKeys || []).filter(Boolean));
+        const clearedMatchKeys = new Set();
         urls.forEach((url) => {
           const matchKeys = getMatchKeys(url);
           savedUrls.delete(url);
           ignoredUrls.delete(url);
           matchKeys.forEach((key) => {
+            clearedMatchKeys.add(key);
             savedMatchKeys.delete(key);
             ignoredMatchKeys.delete(key);
           });
@@ -1153,23 +1173,47 @@
             matchKeys.forEach((key) => ignoredMatchKeys.add(key));
           }
         });
+        const loadingByUrl = { ...(pageState.loadingByUrl || {}) };
+        Object.keys(loadingByUrl).forEach((entryUrl) => {
+          if (urls.has(entryUrl)) {
+            delete loadingByUrl[entryUrl];
+            return;
+          }
+          const entryMatchKeys = getMatchKeys(entryUrl);
+          if (entryMatchKeys.some((key) => clearedMatchKeys.has(key))) {
+            delete loadingByUrl[entryUrl];
+          }
+        });
         pageState.savedUrls = Array.from(savedUrls);
         pageState.ignoredUrls = Array.from(ignoredUrls);
         pageState.savedMatchKeys = Array.from(savedMatchKeys);
         pageState.ignoredMatchKeys = Array.from(ignoredMatchKeys);
+        pageState.loadingByUrl = loadingByUrl;
         if (typeof pageState.apply === "function") {
-          pageState.apply();
-          return;
+          try {
+            pageState.apply();
+            return;
+          } catch {
+            // Fall through to the direct DOM patch path if the page mutates mid-apply.
+          }
         }
 
         document.querySelectorAll("a[href]").forEach((anchor) => {
           const href = (${normalizeUrl.toString()})(anchor.href);
-          if (!href || !urls.has(href)) {
+          if (!href) {
             return;
           }
+          const hrefMatchKeys = getMatchKeys(href);
+          const isMatched = urls.has(href) || hrefMatchKeys.some((key) => clearedMatchKeys.has(key));
+          if (!isMatched) {
+            return;
+          }
+          const entryContainer = (anchor.closest("article, li, .result, .search-result, .record, .item, tr") || anchor.parentElement);
           anchor.classList.remove("trove-library-saved", "trove-library-ignored");
+          entryContainer?.classList.remove("trove-library-entry-saved", "trove-library-entry-ignored");
           if (status === "saved" || status === "ignored") {
             anchor.classList.add(status === "saved" ? "trove-library-saved" : "trove-library-ignored");
+            entryContainer?.classList.add(status === "saved" ? "trove-library-entry-saved" : "trove-library-entry-ignored");
           }
           const controls = anchor.nextElementSibling;
           if (controls && controls.classList.contains(actionClass)) {
@@ -1237,11 +1281,16 @@
         const urls = new Set((${JSON.stringify(payload.urls || [])} || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const stateKey = "__troveLibraryPageState";
         const normalizeUrl = ${normalizeUrl.toString()};
+        const getMatchKeys = ${getMatchKeys.toString()};
         if (!urls.size) {
           return;
         }
         const pageState = window[stateKey] || (window[stateKey] = {});
         const loadingByUrl = { ...(pageState.loadingByUrl || {}) };
+        const clearedMatchKeys = new Set();
+        urls.forEach((url) => {
+          getMatchKeys(url).forEach((key) => clearedMatchKeys.add(key));
+        });
         urls.forEach((url) => {
           if (active) {
             loadingByUrl[url] = { action, label };
@@ -1249,6 +1298,14 @@
             delete loadingByUrl[url];
           }
         });
+        if (!active) {
+          Object.keys(loadingByUrl).forEach((entryUrl) => {
+            const entryMatchKeys = getMatchKeys(entryUrl);
+            if (entryMatchKeys.some((key) => clearedMatchKeys.has(key))) {
+              delete loadingByUrl[entryUrl];
+            }
+          });
+        }
         pageState.loadingByUrl = loadingByUrl;
         if (typeof pageState.apply === "function") {
           pageState.apply();

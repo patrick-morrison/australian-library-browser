@@ -26,6 +26,8 @@ const state = {
   actionQueueRunning: false,
   queuedActionIds: new Set(),
   actionNonce: 0,
+  previewActionId: "",
+  previewIntent: null,
   troveLinkDialogUrls: []
 };
 
@@ -131,7 +133,9 @@ const previewState = {
   origin: "page",
   tabId: "",
   pageUrl: "",
-  imageIndex: 0
+  imageIndex: 0,
+  statusOverride: "",
+  statusOverrideProjectPath: ""
 };
 
 const backgroundFetchCache = new Map();
@@ -313,19 +317,25 @@ function renderSavedSearches() {
 
   if (!searches.length) {
     elements.savedSearches.className = "saved-searches empty-state";
-    elements.savedSearches.textContent = "No saved searches yet. Use Save Search while browsing result pages.";
+    elements.savedSearches.textContent = "No saved searches yet. Use Save while browsing result pages.";
     return;
   }
 
   const renderRow = (search) => `
-    <button type="button" class="saved-search-item" data-search-path="${escapeHtml(search.path)}" data-search-url="${escapeHtml(search.url || "")}">
+    <button
+      type="button"
+      class="saved-search-item${isSearchCurrent(search.url || "") ? " is-current" : ""}"
+      data-search-path="${escapeHtml(search.path)}"
+      data-search-url="${escapeHtml(search.url || "")}"
+    >
       <strong>${escapeHtml(search.label || search.name.replace(/\.url\.txt$/i, "").replace(/\.csv$/i, ""))}</strong>
+      <span class="saved-search-meta">${escapeHtml(formatSavedSearchUrl(search.url || ""))}</span>
       <span class="saved-search-meta">${escapeHtml(formatDate(search.modifiedAt))}</span>
     </button>
   `;
 
   elements.savedSearches.className = "saved-searches";
-  elements.savedSearches.innerHTML = searches.slice(0, 6).map(renderRow).join("");
+  elements.savedSearches.innerHTML = searches.map(renderRow).join("");
 
   for (const container of [elements.savedSearches]) {
     container.querySelectorAll("[data-search-path]").forEach((button) => {
@@ -408,7 +418,7 @@ function renderSavedSearchMenu() {
     .map(
       (search) => `
         <div class="saved-searches-menu-row">
-          <button type="button" class="saved-searches-menu-open" data-search-url="${escapeHtml(search.url || "")}" data-search-path="${escapeHtml(search.path)}">
+          <button type="button" class="saved-searches-menu-open${isSearchCurrent(search.url || "") ? " is-current" : ""}" data-search-url="${escapeHtml(search.url || "")}" data-search-path="${escapeHtml(search.path)}">
             <span class="saved-searches-menu-main">
               <strong>${escapeHtml(search.label || search.name.replace(/\.url\.txt$/i, "").replace(/\.csv$/i, ""))}</strong>
               <span class="saved-searches-menu-url">${escapeHtml(formatSavedSearchUrl(search.url || ""))}</span>
@@ -549,6 +559,14 @@ function isCurrentPageAlreadySavedSearch() {
   }
   const currentUrl = normalizeComparableUrl(activeTab.url);
   return (state.projectSearches || []).some((search) => normalizeComparableUrl(search.url) === currentUrl);
+}
+
+function isSearchCurrent(searchUrl) {
+  const activeTab = getActiveTab();
+  if (!activeTab?.url || !searchUrl) {
+    return false;
+  }
+  return normalizeComparableUrl(activeTab.url) === normalizeComparableUrl(searchUrl);
 }
 
 function isKnownCollectionHost(hostname) {
@@ -707,6 +725,97 @@ function buildQueuedActionTarget(item, url) {
   };
 }
 
+function buildInlineQueueStub(url, label = "") {
+  const normalizedUrl = ensureUrl(url || "");
+  if (!normalizedUrl) {
+    return null;
+  }
+  let source = "unknown";
+  if (/trove\.nla\.gov\.au/i.test(normalizedUrl)) {
+    source = "trove";
+  } else if (/slwa\.wa\.gov\.au/i.test(normalizedUrl)) {
+    source = "slwa";
+  } else if (/museum\.wa\.gov\.au/i.test(normalizedUrl)) {
+    source = "wa-museum";
+  }
+  return {
+    url: normalizedUrl,
+    aliases: [normalizedUrl],
+    title: String(label || normalizedUrl).trim(),
+    source
+  };
+}
+
+function queuedTargetsReferToSameRecord(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  if (left.key && right.key && left.key === right.key) {
+    return true;
+  }
+  return itemsReferToSameRecord(left, right);
+}
+
+function pruneQueuedActionsForTarget(projectPath, target, incomingAction) {
+  if (!projectPath || !target || !state.actionQueue.length) {
+    return;
+  }
+  // Keep only the latest queued intent for the same record. This lets a later
+  // uncollect/unignore supersede stale queued work before it starts.
+  const nextQueue = [];
+  for (const job of state.actionQueue) {
+    const sameProject = job.projectPath === projectPath;
+    const sameTarget = sameProject && queuedTargetsReferToSameRecord(job.item, target);
+    if (sameTarget && job.action !== incomingAction) {
+      state.queuedActionIds.delete(job.actionKey);
+      continue;
+    }
+    nextQueue.push(job);
+  }
+  state.actionQueue = nextQueue;
+}
+
+function shouldReflectQueuedActionInCapture(target, options = {}) {
+  if (options.source === "sidebar") {
+    return true;
+  }
+  const displayedItem = getDisplayedItem();
+  if (!displayedItem || !target) {
+    return false;
+  }
+  return itemsReferToSameRecord(displayedItem, target);
+}
+
+function beginPreviewIntent(origin = "link", context = getCaptureContext(), token = "") {
+  state.previewIntent = {
+    origin,
+    token,
+    tabId: context?.tabId || "",
+    pageUrl: ensureUrl(context?.pageUrl || "")
+  };
+}
+
+function clearPreviewIntent(token = "") {
+  if (!state.previewIntent) {
+    return;
+  }
+  if (token && state.previewIntent.token && state.previewIntent.token !== token) {
+    return;
+  }
+  state.previewIntent = null;
+}
+
+function hasPendingLinkPreviewForTab(tab = getActiveTab()) {
+  return Boolean(
+    tab &&
+      state.previewIntent &&
+      state.previewIntent.origin === "link" &&
+      state.previewIntent.tabId === tab.id &&
+      state.previewIntent.pageUrl &&
+      ensureUrl(tab.url || "") === state.previewIntent.pageUrl
+  );
+}
+
 function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   const item = typeof itemOrUrl === "string" ? null : itemOrUrl;
   const url = typeof itemOrUrl === "string" ? itemOrUrl : itemOrUrl?.url || "";
@@ -719,6 +828,7 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   if (state.queuedActionIds.has(actionKey)) {
     return false;
   }
+  pruneQueuedActionsForTarget(projectPath, target, action);
 
   const job = {
     id: `action-${Date.now()}-${++state.actionNonce}`,
@@ -736,7 +846,9 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   state.actionQueue.push(job);
 
   const busyLabel = `${describeBusyAction(action)}…`;
-  setCaptureBusy(action, true, target, busyLabel, job.id);
+  if (shouldReflectQueuedActionInCapture(target, options)) {
+    setCaptureBusy(action, true, target, busyLabel, job.id);
+  }
   void applyImmediatePageLoading(target, action, true, busyLabel);
   void processActionQueue();
   return true;
@@ -747,7 +859,23 @@ function getPreferredRefreshProjectPath(projectPath) {
 }
 
 function queueRefreshProjects(projectPath, options = {}) {
-  void refreshProjects(getPreferredRefreshProjectPath(projectPath), options).catch(() => {});
+  void refreshProjects(getPreferredRefreshProjectPath(projectPath), options)
+    .then(() => {
+      const activeProject = getActiveProject();
+      const displayedItem = getDisplayedItem();
+      if (
+        previewState.statusOverrideProjectPath &&
+        previewState.statusOverrideProjectPath === activeProject?.path &&
+        displayedItem
+      ) {
+        const liveStatus = sourceRegistry.itemStatus(activeProject, displayedItem);
+        if (!previewState.statusOverride || liveStatus === previewState.statusOverride) {
+          setPreviewStatusOverride("");
+        }
+        renderCapturePane(displayedItem, getDisplayedMarkdown(), { origin: previewState.origin });
+      }
+    })
+    .catch(() => {});
 }
 
 async function resolveQueuedActionItem(job) {
@@ -828,15 +956,54 @@ function clearPreviewState() {
   previewState.tabId = "";
   previewState.pageUrl = "";
   previewState.imageIndex = 0;
+  previewState.statusOverride = "";
+  previewState.statusOverrideProjectPath = "";
+}
+
+function itemsReferToSameRecord(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  if (left.key && right.key && left.key === right.key) {
+    return true;
+  }
+  const leftUrls = [...new Set([left.url, ...(left.aliases || [])].filter(Boolean).map((value) => normalizeComparableUrl(value)))];
+  const rightUrls = [...new Set([right.url, ...(right.aliases || [])].filter(Boolean).map((value) => normalizeComparableUrl(value)))];
+  return leftUrls.some((value) => rightUrls.includes(value));
+}
+
+function setPreviewStatusOverride(status, projectPath = getActiveProject()?.path || "") {
+  previewState.statusOverride = status || "";
+  previewState.statusOverrideProjectPath = status ? projectPath || "" : "";
+}
+
+function getPreviewStatusOverride(project, item) {
+  if (!project || !item) {
+    return "";
+  }
+  if (!previewState.statusOverride || previewState.statusOverrideProjectPath !== project.path) {
+    return "";
+  }
+  return itemsReferToSameRecord(previewState.item, item) ? previewState.statusOverride : "";
 }
 
 function setPreviewState(item, markdown, origin = "page", context = getCaptureContext()) {
+  const previousItem = previewState.item;
+  const previousStatusOverride = previewState.statusOverride;
+  const previousStatusOverrideProjectPath = previewState.statusOverrideProjectPath;
   previewState.item = item || null;
   previewState.markdown = markdown || "";
   previewState.origin = origin;
   previewState.tabId = context.tabId || "";
   previewState.pageUrl = context.pageUrl || "";
   previewState.imageIndex = 0;
+  if (previousStatusOverride && itemsReferToSameRecord(previousItem, item)) {
+    previewState.statusOverride = previousStatusOverride;
+    previewState.statusOverrideProjectPath = previousStatusOverrideProjectPath;
+  } else {
+    previewState.statusOverride = "";
+    previewState.statusOverrideProjectPath = "";
+  }
 }
 
 function getDisplayedItem() {
@@ -903,6 +1070,16 @@ function hasInlinePreviewForActiveTab() {
   );
 }
 
+function hasCurrentPagePreviewForTab(tab = getActiveTab()) {
+  return Boolean(
+    tab &&
+      previewState.item &&
+      previewState.origin === "page" &&
+      previewState.tabId === tab.id &&
+      previewState.pageUrl === tab.url
+  );
+}
+
 function resetCapturePane(message, kind = "Preview") {
   closeImageLightbox();
   elements.captureEmpty.textContent = message;
@@ -923,7 +1100,7 @@ function resetCapturePane(message, kind = "Preview") {
 
 function renderCapturePane(item, markdown, options = {}) {
   const project = getActiveProject();
-  const status = options.forcedStatus || sourceRegistry.itemStatus(project, item);
+  const status = options.forcedStatus || getPreviewStatusOverride(project, item) || sourceRegistry.itemStatus(project, item);
   const busy = state.captureBusy;
   const progress = state.saveProgress;
   const itemMatchesBusy =
@@ -1838,6 +2015,9 @@ function bindWebview(tab) {
     tab.didDomReady = false;
     updateNavigationButtons();
     invalidateTabCaches(tab);
+    if (state.previewIntent?.tabId === tab.id) {
+      clearPreviewIntent(state.previewIntent.token || "");
+    }
     if (previewState.tabId === tab.id) {
       clearPreviewState();
     }
@@ -1849,8 +2029,15 @@ function bindWebview(tab) {
   });
 
   const syncNavigation = async () => {
-    tab.url = tab.webview.getURL();
-    invalidateTabCaches(tab);
+    const nextUrl = tab.webview.getURL();
+    const urlChanged = nextUrl !== tab.url;
+    tab.url = nextUrl;
+    if (urlChanged) {
+      invalidateTabCaches(tab);
+      if (state.previewIntent?.tabId === tab.id) {
+        clearPreviewIntent(state.previewIntent.token || "");
+      }
+    }
     if (previewState.tabId === tab.id && previewState.pageUrl !== tab.url) {
       clearPreviewState();
     }
@@ -1879,13 +2066,18 @@ function bindWebview(tab) {
 }
 
 function renderTabs() {
+  const previousScrollLeft = elements.tabs.scrollLeft;
   elements.tabs.hidden = state.tabs.length <= 1;
   elements.tabs.innerHTML = "";
+  let activeButton = null;
   for (const tab of state.tabs) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "tab";
     button.classList.toggle("is-active", tab.id === state.activeTabId);
+    if (tab.id === state.activeTabId) {
+      activeButton = button;
+    }
 
     const label = document.createElement("span");
     label.className = "tab-label";
@@ -1904,6 +2096,31 @@ function renderTabs() {
     button.addEventListener("click", () => setActiveTab(tab.id));
     elements.tabs.append(button);
   }
+  requestAnimationFrame(() => {
+    elements.tabs.scrollLeft = previousScrollLeft;
+    activeButton?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+}
+
+function bindTabScroller() {
+  elements.tabs.addEventListener(
+    "wheel",
+    (event) => {
+      if (elements.tabs.hidden || elements.tabs.scrollWidth <= elements.tabs.clientWidth + 1) {
+        return;
+      }
+      const dominantDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (!dominantDelta) {
+        return;
+      }
+      event.preventDefault();
+      elements.tabs.scrollBy({
+        left: dominantDelta,
+        behavior: "auto"
+      });
+    },
+    { passive: false }
+  );
 }
 
 function bindSidebarResizer() {
@@ -2271,7 +2488,7 @@ function updateNavigationButtons() {
   elements.forwardButton.disabled = !safeCanGo(activeTab, "forward");
   elements.reloadButton.disabled = !activeTab.webview?.isConnected;
   elements.saveSearchButton.disabled =
-    !getActiveProject() || !isWebviewReady(activeTab) || isCurrentPageAlreadySavedSearch();
+    !getActiveProject() || !ensureUrl(activeTab.url || "") || isCurrentPageAlreadySavedSearch();
 }
 
 async function applyProjectDecorations() {
@@ -2502,20 +2719,34 @@ async function maybeHydrateSlwaCurrentPageItem(item) {
   return hydrated;
 }
 
-async function showCaptureItem(item, origin = "page", context = getCaptureContext()) {
+async function showCaptureItem(item, origin = "page", context = getCaptureContext(), requestId = 0) {
   const markdown = await window.troveApi.previewMarkdown(item);
+  if (requestId && requestId !== state.captureRequestId) {
+    return false;
+  }
   setPreviewState(item, markdown, origin, context);
   renderCapturePane(item, markdown, { origin });
+  return true;
 }
 
 async function previewItemFromUrl(url) {
-  const context = getCaptureContext();
   const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
+  const context = getCaptureContext();
+  const requestId = ++state.captureRequestId;
+  const previewToken = `preview-${requestId}`;
+  state.previewActionId = previewToken;
+  beginPreviewIntent("link", context, previewToken);
   void applyImmediatePageLoading(placeholder, "preview", true);
+  setCaptureBusy("preview", true, placeholder, "Previewing…", previewToken);
   setMessage("Loading linked item preview…");
-  resetCapturePane("Loading the linked record into the capture pane.", "Loading");
+  if (!getDisplayedItem()) {
+    resetCapturePane("Loading the linked record into the capture pane.", "Loading");
+  }
   try {
     const item = await fetchItemByUrl(url, { mode: "preview" });
+    if (requestId !== state.captureRequestId || state.previewActionId !== previewToken) {
+      return;
+    }
     if (!item?.supported) {
       clearPreviewState();
       resetCapturePane(item?.reason || "Could not build a preview for that link.");
@@ -2527,9 +2758,17 @@ async function previewItemFromUrl(url) {
       ...item,
       aliases: [...new Set([clickedUrl, item.url, ...(item.aliases || [])].filter(Boolean))]
     };
-    await showCaptureItem(itemWithClickedAlias, "link", context);
+    const rendered = await showCaptureItem(itemWithClickedAlias, "link", context, requestId);
+    if (!rendered || requestId !== state.captureRequestId || state.previewActionId !== previewToken) {
+      return;
+    }
     setMessage(`Previewing ${itemWithClickedAlias.title}.`);
   } finally {
+    if (state.previewActionId === previewToken) {
+      state.previewActionId = "";
+    }
+    clearPreviewIntent(previewToken);
+    setCaptureBusy("", false, null, "", previewToken);
     void applyImmediatePageLoading(placeholder, "preview", false);
   }
 }
@@ -2543,6 +2782,7 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
     const savableItem = await ensureCollectableItem(item);
     await window.troveApi.saveItem(projectPath, savableItem);
     if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url)) {
+      setPreviewStatusOverride("saved", projectPath);
       previewState.item = savableItem;
       renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -2586,6 +2826,7 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
   try {
     await window.troveApi.uncollectItem(projectPath, item);
     if (isCaptureContextCurrent(options.context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
+      setPreviewStatusOverride("", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: ""
@@ -2618,6 +2859,7 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
   try {
     await window.troveApi.unignoreItem(projectPath, item);
     if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
+      setPreviewStatusOverride("", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: ""
@@ -2650,6 +2892,7 @@ async function ignoreItemInProject(item, projectPath = getActiveProject()?.path,
   try {
     await window.troveApi.ignoreItem(projectPath, item);
     if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
+      setPreviewStatusOverride("ignored", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: "ignored"
@@ -2744,7 +2987,7 @@ async function collectItemFromUrl(url) {
   }
 }
 
-async function toggleIgnoreItemFromUrl(url) {
+async function toggleIgnoreItemFromUrl(url, label = "") {
   const project = getActiveProject();
   if (!project) {
     setMessage("Select a project before ignoring items.");
@@ -2757,7 +3000,8 @@ async function toggleIgnoreItemFromUrl(url) {
     return;
   }
   const action = status === "ignored" ? "unignore" : "ignore";
-  const queued = queueProjectAction(action, project.path, normalizedUrl, { source: "inline" });
+  const target = buildInlineQueueStub(normalizedUrl, label);
+  const queued = queueProjectAction(action, project.path, target || normalizedUrl, { source: "inline" });
   if (queued) {
     setMessage(`${describeBusyAction(action)} queued.`);
   }
@@ -2776,7 +3020,7 @@ async function handleInlineAction(payload) {
     return;
   }
   if (payload.action === "ignore-link") {
-    await toggleIgnoreItemFromUrl(payload.url);
+    await toggleIgnoreItemFromUrl(payload.url, payload.label || "");
   }
 }
 
@@ -2799,8 +3043,8 @@ async function saveCurrentSearchResults() {
     return;
   }
   const activeTab = getActiveTab();
-  if (!isWebviewReady(activeTab)) {
-    setMessage("Wait for the page to finish loading first.");
+  if (!activeTab?.webview?.isConnected) {
+    setMessage("Open a page before saving a search.");
     return;
   }
 
@@ -2880,7 +3124,6 @@ async function runDebugCommand(command) {
 async function updateCaptureState() {
   const project = getActiveProject();
   const activeTab = getActiveTab();
-  const requestId = ++state.captureRequestId;
   elements.captureCollect.disabled = !project || !getDisplayedItem();
   elements.captureIgnore.disabled = !project || !getDisplayedItem();
   elements.captureOpenPage.disabled = !getDisplayedItem()?.url;
@@ -2894,7 +3137,16 @@ async function updateCaptureState() {
     return;
   }
 
-  if (!hasInlinePreviewForActiveTab()) {
+  // A user-clicked link preview has priority over background page capture until
+  // it either resolves or fails. Otherwise scheduled page refreshes can stomp
+  // on an in-flight explicit preview before it lands.
+  if (hasPendingLinkPreviewForTab(activeTab)) {
+    return;
+  }
+
+  const requestId = ++state.captureRequestId;
+
+  if (!hasInlinePreviewForActiveTab() && !hasCurrentPagePreviewForTab(activeTab)) {
     resetCapturePane("Reading the current page and preparing its capture preview.", "Loading");
   }
 
@@ -2954,6 +3206,18 @@ async function updateCaptureState() {
     return;
   }
 
+  const context = getCaptureContext();
+  const needsFollowUp =
+    Boolean(item?.supported) &&
+    ((item.source === "trove" && /\/work\/\d+/i.test(item.url || activeTab?.url || "")) || item.source === "slwa");
+
+  if (needsFollowUp && !hasCurrentPagePreviewForTab(activeTab)) {
+    await showCaptureItem(item, "page", context, requestId);
+    if (requestId !== state.captureRequestId) {
+      return;
+    }
+  }
+
   item = await maybeBridgeCurrentPageItem(item, activeTab);
   if (requestId !== state.captureRequestId) {
     return;
@@ -2963,8 +3227,8 @@ async function updateCaptureState() {
     return;
   }
 
-  await showCaptureItem(item, "page", getCaptureContext());
-  if (requestId !== state.captureRequestId) {
+  const rendered = await showCaptureItem(item, "page", context, requestId);
+  if (!rendered || requestId !== state.captureRequestId) {
     return;
   }
 
@@ -3061,6 +3325,9 @@ async function refreshProjects(preferredPath = state.activeProjectPath, options 
     state.activeProjectPath = state.projects[0].path;
   } else {
     state.activeProjectPath = preferredPath;
+  }
+  if (previewState.statusOverrideProjectPath && previewState.statusOverrideProjectPath !== state.activeProjectPath) {
+    setPreviewStatusOverride("");
   }
 
   await refreshProjectSearches();
@@ -3400,6 +3667,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderDebugCwd();
   renderSources();
   renderPluginIntake();
+  bindTabScroller();
   bindSidebarResizer();
   webviewResizeObserver = new ResizeObserver(() => {
     syncWebviewElementSize();

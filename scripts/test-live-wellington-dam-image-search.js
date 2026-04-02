@@ -5,6 +5,7 @@ const {
   createProject,
   navigate,
   waitForInlineActions,
+  waitForPreview,
   screenshot,
   cleanupProject
 } = require("./live-e2e-helpers");
@@ -26,13 +27,21 @@ async function run() {
     }
     const searchShot = await screenshot(page, "wellington-dam-images-search.png");
 
+    await navigate(page, "https://trove.nla.gov.au/work/260365248?keyword=Wellington%20Dam%20campsite");
+    await waitForPreview(page, "image", {
+      timeout: 120000,
+      markdownIncludes: "https://purl.slwa.wa.gov.au/slwa_b3507746_1",
+      imageSrcIncludes: "slwa_b3507746_1.jpg"
+    });
+    const previewShot = await screenshot(page, "wellington-dam-images-work-preview.png");
+
     console.log(
       JSON.stringify(
         {
           projectName: project.projectName,
           projectDir: project.projectDir,
           inlineCount,
-          screenshot: searchShot
+          screenshots: [searchShot, previewShot]
         },
         null,
         2

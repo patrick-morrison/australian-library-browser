@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require("fs/promises");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
@@ -510,13 +511,16 @@ async function main() {
   };
 
   const electronBinary = require("electron");
+  const userDataDir = path.join(os.tmpdir(), `trove-browser-audit-${process.pid}-${Date.now()}`);
   const app = await electron.launch({
     executablePath: electronBinary,
     args: [repoRoot],
     cwd: repoRoot,
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: ""
+      ELECTRON_RUN_AS_NODE: "",
+      TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+      TROVE_BROWSER_USER_DATA_DIR: userDataDir
     }
   });
 
