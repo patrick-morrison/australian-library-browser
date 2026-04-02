@@ -36,27 +36,6 @@ async function waitForManifest(projectDir, projectSlug, predicate, timeout = 900
   throw new Error(`Timed out waiting for manifest condition in ${manifestPath}`);
 }
 
-async function waitForCaptureVisible(page, timeout = 15000) {
-  await page.waitForFunction(() => {
-    const body = document.querySelector("#capture-body");
-    const empty = document.querySelector("#capture-empty");
-    const markdown = document.querySelector("#capture-markdown")?.innerText || "";
-    return Boolean(body && !body.hidden && (!empty || empty.hidden) && markdown.length > 120);
-  }, null, { timeout });
-}
-
-async function waitForCaptureMarkdownContains(page, needle, timeout = 30000) {
-  const normalizedNeedle = String(needle || "").toLowerCase();
-  await page.waitForFunction(
-    (textNeedle) => {
-      const markdown = document.querySelector("#capture-markdown")?.innerText || "";
-      return markdown.toLowerCase().includes(textNeedle);
-    },
-    normalizedNeedle,
-    { timeout }
-  );
-}
-
 async function readCaptureSnapshot(page) {
   return page.evaluate(() => {
     const markdown = document.querySelector("#capture-markdown")?.innerText || "";
@@ -91,8 +70,10 @@ async function run() {
 
     await clickInlineAction(page, { action: "preview", urlMatch: previewTarget });
     await waitForInlineState(page, { action: "preview", urlMatch: previewTarget, expectText: "Previewing…" }, 10000);
-    await waitForCaptureVisible(page, 30000);
-    await waitForCaptureMarkdownContains(page, "https://trove.nla.gov.au/newspaper/article/260382127", 30000);
+    await waitForPreview(page, "text", {
+      markdownIncludes: "https://trove.nla.gov.au/newspaper/article/260382127",
+      timeout: 60000
+    });
     const previewShot = await screenshot(page, "live-inline-preview-loaded.png");
     const previewSnapshot = await readCaptureSnapshot(page);
     if (!previewSnapshot.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
@@ -108,6 +89,9 @@ async function run() {
     if (/collecting/i.test(duringCollect.collectText)) {
       throw new Error("Sidebar collect button should not enter collecting state for another row's inline collect.");
     }
+    if (/collected/i.test(duringCollect.collectText)) {
+      throw new Error("Sidebar collect button should not flip to Collected for another row's inline collect.");
+    }
     await waitForInlineState(page, { action: "collect", urlMatch: collectTarget, expectText: "Collected" }, 120000);
 
     let manifest = await waitForManifest(
@@ -121,10 +105,14 @@ async function run() {
     if (!afterCollectSnapshot.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
       throw new Error("Preview pane changed after inline collect on a different row.");
     }
+    if (/collected/i.test(afterCollectSnapshot.collectText)) {
+      throw new Error("Sidebar collect button should stay scoped to the previewed article after another row is collected.");
+    }
 
     await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
     await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Ignoring…" }, 10000);
     await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Unignore", rowOpacity: 0.6 }, 120000);
+    const ignoreShot = await screenshot(page, "live-inline-ignore-greyed.png");
 
     manifest = await waitForManifest(
       project.projectDir,
@@ -136,11 +124,45 @@ async function run() {
         doc.ignored.length === 1
     );
 
-    const ignoreShot = await screenshot(page, "live-inline-ignore-greyed.png");
     const afterIgnoreSnapshot = await readCaptureSnapshot(page);
     if (!afterIgnoreSnapshot.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
       throw new Error("Preview pane changed after inline ignore on a different row.");
     }
+
+    await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Unignoring…" }, 10000);
+    await page.waitForFunction(
+      (urlNeedle) => {
+        const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
+        const target = groups.find((group) =>
+          String(group.getAttribute("data-trove-library-url") || "").toLowerCase().includes(String(urlNeedle).toLowerCase())
+        );
+        const ignoreButton = target?.querySelector(".ignore");
+        const container =
+          target?.closest(".result, .search-result-item, .briefcitDetail, .browseEntry, .bibRecordLink, article, li, tr, .record, .item, .wrap") ||
+          target?.parentElement;
+        if (!ignoreButton || !container) {
+          return false;
+        }
+        const buttonText = String(ignoreButton.textContent || "").replace(/\s+/g, " ").trim();
+        const opacity = Number(getComputedStyle(container).opacity || 1);
+        return buttonText === "Ignore" && opacity >= 0.95;
+      },
+      ignoreTarget,
+      { timeout: 120000 }
+    );
+
+    manifest = await waitForManifest(
+      project.projectDir,
+      project.projectSlug,
+      (doc) =>
+        Array.isArray(doc?.saved) &&
+        doc.saved.length === 1 &&
+        Array.isArray(doc?.ignored) &&
+        doc.ignored.length === 0
+    );
+
+    const unignoreShot = await screenshot(page, "live-inline-unignore-cleared.png");
 
     await navigate(page, "https://trove.nla.gov.au/newspaper/article/85178391");
     await waitForPreview(page, "text", {
@@ -180,7 +202,7 @@ async function run() {
         Array.isArray(doc?.saved) &&
         doc.saved.length === 2 &&
         Array.isArray(doc?.ignored) &&
-        doc.ignored.length === 2
+        doc.ignored.length === 1
     );
 
     const sidebarIgnoreShot = await screenshot(page, "live-sidebar-ignore-unignore.png");
@@ -192,7 +214,7 @@ async function run() {
           projectDir: project.projectDir,
           savedCount: manifest.saved.length,
           ignoredCount: manifest.ignored.length,
-          screenshots: [previewShot, collectShot, ignoreShot, sidebarCollectShot, sidebarIgnoreShot]
+          screenshots: [previewShot, collectShot, ignoreShot, unignoreShot, sidebarCollectShot, sidebarIgnoreShot]
         },
         null,
         2

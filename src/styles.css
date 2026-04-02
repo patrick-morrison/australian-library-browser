@@ -448,6 +448,13 @@ button.is-acknowledged {
   align-self: flex-start;
 }
 
+.source-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .project-meta,
 .message-text,
 .empty-state {
@@ -501,7 +508,7 @@ button.is-acknowledged {
 
 .toolbar-row {
   display: grid;
-  grid-template-columns: 42px 42px 42px minmax(220px, 1fr) auto auto auto auto;
+  grid-template-columns: 42px 42px 42px minmax(220px, 1fr) auto auto auto auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -671,6 +678,15 @@ button.is-acknowledged {
   align-items: center;
   justify-content: center;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+#capture-collect {
+  min-inline-size: 9.5rem;
+}
+
+#capture-ignore {
+  min-inline-size: 8.5rem;
 }
 
 .tabs {
@@ -1138,18 +1154,18 @@ button.is-acknowledged {
 }
 
 .trove-link-dialog-card {
-  width: min(92vw, 760px);
-  max-width: 760px;
+  width: min(92vw, 720px);
+  max-width: 720px;
 }
 
 .trove-link-dialog-input {
-  min-height: 220px;
+  min-height: 200px;
 }
 
 .trove-link-dialog-preview {
   display: grid;
-  gap: 8px;
-  max-height: 220px;
+  gap: 10px;
+  max-height: 260px;
   overflow: auto;
   padding: 12px;
   border: 1px solid rgba(120, 93, 65, 0.14);
@@ -1159,11 +1175,18 @@ button.is-acknowledged {
 
 .trove-link-preview-item {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(120, 93, 65, 0.08);
+}
+
+.trove-link-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .trove-link-preview-index {
@@ -1172,10 +1195,25 @@ button.is-acknowledged {
   font-weight: 700;
 }
 
-.trove-link-preview-url {
+.trove-link-preview-kind {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(157, 63, 38, 0.1);
+  color: var(--accent-strong);
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.trove-link-preview-summary {
   color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.trove-link-preview-url {
+  color: var(--muted);
   font: 12px/1.45 "SFMono-Regular", Menlo, Consolas, monospace;
-  word-break: break-all;
+  word-break: break-word;
 }
 
 .plugins-actions {
@@ -1374,7 +1412,6 @@ button.is-acknowledged {
 .app-shell.mode-collect .capture-actions .ghost-button,
 .app-shell.mode-collect .capture-actions .secondary-action,
 .app-shell.mode-collect .capture-actions .primary-action {
-  min-width: 0;
   padding: 8px 10px;
   font-size: 0.82rem;
 }

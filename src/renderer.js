@@ -89,7 +89,6 @@ const elements = {
   capturePanel: document.getElementById("capture-panel"),
   captureEmpty: document.getElementById("capture-empty"),
   captureBody: document.getElementById("capture-body"),
-  captureOpenPage: document.getElementById("capture-open-page"),
   captureIgnore: document.getElementById("capture-ignore"),
   captureCollect: document.getElementById("capture-collect"),
   captureCopyMarkdown: document.getElementById("capture-copy-markdown"),
@@ -119,7 +118,6 @@ const elements = {
   pluginCopyProbeCommand: document.getElementById("plugin-copy-probe-command"),
   pluginPromptOutput: document.getElementById("plugin-prompt-output"),
   pluginStatus: document.getElementById("plugin-status"),
-  troveLinkExtractorButton: document.getElementById("trove-link-extractor-button"),
   troveLinkExtractorStatus: document.getElementById("trove-link-extractor-status"),
   troveLinkDialog: document.getElementById("trove-link-dialog"),
   troveLinkDialogBackdrop: document.getElementById("trove-link-dialog-backdrop"),
@@ -244,6 +242,13 @@ function getActiveProject() {
   return state.projects.find((project) => project.path === state.activeProjectPath) || null;
 }
 
+function getProjectByPath(projectPath) {
+  if (!projectPath) {
+    return null;
+  }
+  return state.projects.find((project) => project.path === projectPath) || null;
+}
+
 function renderProjectDialogLocation() {
   elements.projectDialogLocation.textContent = state.selectedProjectDirectory
     ? state.selectedProjectDirectory
@@ -262,15 +267,64 @@ function closeProjectDialog() {
   elements.projectDialogName.value = "";
 }
 
+function describeTroveLinkUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (/\/newspaper\/article\/(\d+)/i.test(path)) {
+      const [, id] = path.match(/\/newspaper\/article\/(\d+)/i) || [];
+      return {
+        kind: "Article",
+        summary: `newspaper/article/${id || ""}`,
+        detail: parsed.hostname.replace(/^www\./i, "")
+      };
+    }
+    if (/\/work\/(\d+)/i.test(path)) {
+      const [, id] = path.match(/\/work\/(\d+)/i) || [];
+      return {
+        kind: "Work",
+        summary: `work/${id || ""}`,
+        detail: parsed.hostname.replace(/^www\./i, "")
+      };
+    }
+    if (/\/search\//i.test(path) || path === "/search") {
+      const query =
+        parsed.searchParams.get("keyword") ||
+        parsed.searchParams.get("q") ||
+        parsed.searchParams.get("query") ||
+        parsed.searchParams.get("searcharg") ||
+        "";
+      return {
+        kind: "Search",
+        summary: query ? `search · ${query}` : "search",
+        detail: formatSavedSearchUrl(url)
+      };
+    }
+    return {
+      kind: "Trove",
+      summary: path.replace(/^\//, "") || parsed.hostname,
+      detail: formatSavedSearchUrl(url)
+    };
+  } catch {
+    return {
+      kind: "Trove",
+      summary: url,
+      detail: url
+    };
+  }
+}
+
 function renderTroveLinkDialogPreview() {
   const urls = state.troveLinkDialogUrls;
   elements.troveLinkDialogOpen.disabled = !urls.length;
   elements.troveLinkDialogStatus.textContent = urls.length
     ? `Found ${urls.length} Trove link${urls.length === 1 ? "" : "s"}.`
     : "No Trove links found yet.";
-  elements.troveLinkExtractorStatus.textContent = urls.length
-    ? `${urls.length} Trove link${urls.length === 1 ? "" : "s"} ready to open from pasted text.`
-    : "Looks for Trove article, work, and search URLs inside unstructured text.";
+  if (elements.troveLinkExtractorStatus) {
+    elements.troveLinkExtractorStatus.textContent = urls.length
+      ? `${urls.length} Trove link${urls.length === 1 ? "" : "s"} ready to open from pasted text.`
+      : "Looks for Trove article, work, and search URLs inside unstructured text.";
+  }
 
   if (!urls.length) {
     elements.troveLinkDialogPreview.className = "trove-link-dialog-preview empty-state";
@@ -280,14 +334,19 @@ function renderTroveLinkDialogPreview() {
 
   elements.troveLinkDialogPreview.className = "trove-link-dialog-preview";
   elements.troveLinkDialogPreview.innerHTML = urls
-    .map(
-      (url, index) => `
+    .map((url, index) => {
+      const meta = describeTroveLinkUrl(url);
+      return `
         <div class="trove-link-preview-item">
-          <span class="trove-link-preview-index">Link ${index + 1}</span>
-          <span class="trove-link-preview-url">${escapeHtml(url)}</span>
+          <div class="trove-link-preview-head">
+            <span class="trove-link-preview-index">Link ${index + 1}</span>
+            <span class="trove-link-preview-kind">${escapeHtml(meta.kind)}</span>
+          </div>
+          <strong class="trove-link-preview-summary">${escapeHtml(meta.summary)}</strong>
+          <span class="trove-link-preview-url">${escapeHtml(meta.detail)}</span>
         </div>
       `
-    )
+    })
     .join("");
 }
 
@@ -931,23 +990,80 @@ function queuedTargetsReferToSameRecord(left, right) {
   return itemsReferToSameRecord(left, right);
 }
 
+function getStatusAfterAction(action) {
+  if (action === "collect") {
+    return "saved";
+  }
+  if (action === "ignore") {
+    return "ignored";
+  }
+  if (action === "uncollect" || action === "unignore") {
+    return "";
+  }
+  return "";
+}
+
+function getQueuedIntentForItem(projectPath, item) {
+  if (!projectPath || !item) {
+    return "";
+  }
+  for (let index = state.actionQueue.length - 1; index >= 0; index -= 1) {
+    const job = state.actionQueue[index];
+    if (job.projectPath === projectPath && queuedTargetsReferToSameRecord(job.item, item)) {
+      return getStatusAfterAction(job.action);
+    }
+  }
+  if (
+    state.currentQueueJob &&
+    state.currentQueueJob.projectPath === projectPath &&
+    queuedTargetsReferToSameRecord(state.currentQueueJob.item, item)
+  ) {
+    return getStatusAfterAction(state.currentQueueJob.action);
+  }
+  return "";
+}
+
+function getEffectiveItemStatus(project, item) {
+  if (!project || !item) {
+    return "";
+  }
+  const queuedStatus = getQueuedIntentForItem(project.path, item);
+  if (queuedStatus === "saved" || queuedStatus === "ignored" || queuedStatus === "") {
+    const hasQueuedIntent =
+      queuedStatus !== "" ||
+      Boolean(
+        (state.currentQueueJob &&
+          state.currentQueueJob.projectPath === project.path &&
+          queuedTargetsReferToSameRecord(state.currentQueueJob.item, item)) ||
+          state.actionQueue.some((job) => job.projectPath === project.path && queuedTargetsReferToSameRecord(job.item, item))
+      );
+    if (hasQueuedIntent) {
+      return queuedStatus;
+    }
+  }
+  return sourceRegistry.itemStatus(project, item);
+}
+
 function pruneQueuedActionsForTarget(projectPath, target, incomingAction) {
   if (!projectPath || !target || !state.actionQueue.length) {
-    return;
+    return false;
   }
   // Keep only the latest queued intent for the same record. This lets a later
   // uncollect/unignore supersede stale queued work before it starts.
   const nextQueue = [];
+  let removedAny = false;
   for (const job of state.actionQueue) {
     const sameProject = job.projectPath === projectPath;
     const sameTarget = sameProject && queuedTargetsReferToSameRecord(job.item, target);
     if (sameTarget && job.action !== incomingAction) {
       state.queuedActionIds.delete(job.actionKey);
+      removedAny = true;
       continue;
     }
     nextQueue.push(job);
   }
   state.actionQueue = nextQueue;
+  return removedAny;
 }
 
 function shouldReflectQueuedActionInCapture(target, options = {}) {
@@ -993,10 +1109,40 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   }
 
   const actionKey = getQueuedActionTargetKey(action, projectPath, target, target.url);
-  if (state.queuedActionIds.has(actionKey)) {
-    return false;
+  const removedQueuedConflict = pruneQueuedActionsForTarget(projectPath, target, action);
+  const currentJobMatchesTarget = Boolean(
+    state.currentQueueJob &&
+      state.currentQueueJob.projectPath === projectPath &&
+      queuedTargetsReferToSameRecord(state.currentQueueJob.item, target)
+  );
+  const currentJobMatchesAction = currentJobMatchesTarget && state.currentQueueJob.action === action;
+  const busyLabel = `${describeBusyAction(action)}…`;
+  if (shouldReflectQueuedActionInCapture(target, options)) {
+    setCaptureBusy(action, true, target, busyLabel, currentJobMatchesAction ? state.currentQueueJob?.id || "" : "");
   }
-  pruneQueuedActionsForTarget(projectPath, target, action);
+  void applyImmediatePageLoading(target, action, true, busyLabel, options.context || getCaptureContext());
+
+  if (currentJobMatchesAction) {
+    renderQueueTray();
+    return true;
+  }
+
+  if (state.queuedActionIds.has(actionKey)) {
+    renderQueueTray();
+    return true;
+  }
+
+  const project = getProjectByPath(projectPath);
+  const currentStatus = project ? getEffectiveItemStatus(project, target) : "";
+  const desiredStatus = getStatusAfterAction(action);
+  if (!currentJobMatchesTarget && removedQueuedConflict && currentStatus === desiredStatus) {
+    if (shouldReflectQueuedActionInCapture(target, options)) {
+      setCaptureBusy("", false, null, "", "");
+    }
+    void applyImmediatePageLoading(target, action, false, "", options.context || getCaptureContext());
+    renderQueueTray();
+    return true;
+  }
 
   const job = {
     id: `action-${Date.now()}-${++state.actionNonce}`,
@@ -1013,12 +1159,9 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   state.queuedActionIds.add(actionKey);
   state.actionQueue.push(job);
   renderQueueTray();
-
-  const busyLabel = `${describeBusyAction(action)}…`;
   if (shouldReflectQueuedActionInCapture(target, options)) {
     setCaptureBusy(action, true, target, busyLabel, job.id);
   }
-  void applyImmediatePageLoading(target, action, true, busyLabel, job.context);
   void processActionQueue();
   return true;
 }
@@ -1037,7 +1180,7 @@ function queueRefreshProjects(projectPath, options = {}) {
         previewState.statusOverrideProjectPath === activeProject?.path &&
         displayedItem
       ) {
-        const liveStatus = sourceRegistry.itemStatus(activeProject, displayedItem);
+        const liveStatus = getEffectiveItemStatus(activeProject, displayedItem);
         if (!previewState.statusOverride || liveStatus === previewState.statusOverride) {
           setPreviewStatusOverride("");
         }
@@ -1140,7 +1283,7 @@ function clearPreviewState() {
 }
 
 function hasStickyPreview() {
-  return Boolean(previewState.item && String(previewState.markdown || "").trim());
+  return hasRenderablePreviewContent(previewState.item, previewState.markdown);
 }
 
 function showStickyPreview() {
@@ -1428,6 +1571,13 @@ function hasCurrentPagePreviewForTab(tab = getActiveTab()) {
   );
 }
 
+function hasRenderablePreviewContent(item, markdown) {
+  if (String(markdown || "").trim()) {
+    return true;
+  }
+  return item?.type === "image" && getItemAttachments(item).length > 0;
+}
+
 function resetCapturePane(message, kind = "Preview") {
   if (showStickyPreview()) {
     return;
@@ -1440,7 +1590,6 @@ function resetCapturePane(message, kind = "Preview") {
   setCaptureBusy("", false);
   elements.captureIgnore.disabled = true;
   elements.captureCollect.disabled = true;
-  elements.captureOpenPage.disabled = true;
   elements.captureImageSection.hidden = true;
   elements.captureImageGallery.innerHTML = "";
   renderCaptureMarkdown("");
@@ -1450,8 +1599,16 @@ function resetCapturePane(message, kind = "Preview") {
 }
 
 function renderCapturePane(item, markdown, options = {}) {
+  if (!hasRenderablePreviewContent(item, markdown)) {
+    if (hasStickyPreview() && !itemsReferToSameRecord(previewState.item, item)) {
+      showStickyPreview();
+      return;
+    }
+    resetCapturePane("Preview an item to load its markdown here.");
+    return;
+  }
   const project = getActiveProject();
-  const status = options.forcedStatus || getPreviewStatusOverride(project, item) || sourceRegistry.itemStatus(project, item);
+  const status = options.forcedStatus || getPreviewStatusOverride(project, item) || getEffectiveItemStatus(project, item);
   const busy = state.captureBusy;
   const progress = state.saveProgress;
   const itemMatchesBusy =
@@ -1460,7 +1617,6 @@ function renderCapturePane(item, markdown, options = {}) {
         item &&
         ((busy.key && item.key && busy.key === item.key) || (busy.url && item.url && busy.url === item.url))
     );
-  elements.captureOpenPage.disabled = !item.url;
   elements.captureIgnore.disabled = !project || status === "saved" || itemMatchesBusy;
   elements.captureCollect.disabled = !project || itemMatchesBusy;
   const attachments = getItemAttachments(item);
@@ -2569,6 +2725,9 @@ function renderSources() {
     meta.className = "source-domains";
     meta.textContent = plugin.domains.join(" · ");
 
+    const actions = document.createElement("div");
+    actions.className = "source-card-actions";
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ghost-button source-open";
@@ -2583,7 +2742,19 @@ function renderSources() {
       }
     });
 
-    article.append(heading, copy, meta, button);
+    actions.append(button);
+    if (plugin.id === "trove") {
+      const pasteButton = document.createElement("button");
+      pasteButton.type = "button";
+      pasteButton.className = "ghost-button source-open";
+      pasteButton.textContent = "Paste Links";
+      pasteButton.addEventListener("click", () => {
+        openTroveLinkDialog();
+      });
+      actions.append(pasteButton);
+    }
+
+    article.append(heading, copy, meta, actions);
     elements.sourceList.append(article);
 
     if (elements.pluginsSupported) {
@@ -3096,6 +3267,9 @@ async function showCaptureItem(item, origin = "page", context = getCaptureContex
   if (requestId && requestId !== state.captureRequestId) {
     return false;
   }
+  if (!hasRenderablePreviewContent(item, markdown)) {
+    return false;
+  }
   setPreviewState(item, markdown, origin, context);
   renderCapturePane(item, markdown, { origin });
   void warmCollectableItem(item);
@@ -3156,7 +3330,7 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
   try {
     const savableItem = await ensureCollectableItem(item);
     await window.troveApi.saveItem(projectPath, savableItem);
-    if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === savableItem.key || getDisplayedItem()?.url === savableItem.url)) {
+    if (isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), savableItem)) {
       setPreviewStatusOverride("saved", projectPath);
       previewState.item = savableItem;
       renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
@@ -3201,7 +3375,7 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
   }
   try {
     await window.troveApi.uncollectItem(projectPath, item);
-    if (isCaptureContextCurrent(options.context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
+    if (isCaptureContextCurrent(options.context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
       setPreviewStatusOverride("", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -3234,7 +3408,7 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
   }
   try {
     await window.troveApi.unignoreItem(projectPath, item);
-    if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
+    if (isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
       setPreviewStatusOverride("", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -3267,7 +3441,7 @@ async function ignoreItemInProject(item, projectPath = getActiveProject()?.path,
   }
   try {
     await window.troveApi.ignoreItem(projectPath, item);
-    if (isCaptureContextCurrent(context) && (getDisplayedItem()?.key === item.key || getDisplayedItem()?.url === item.url)) {
+    if (isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
       setPreviewStatusOverride("ignored", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
@@ -3381,7 +3555,7 @@ async function collectItemFromUrl(url) {
     return;
   }
   const normalizedUrl = ensureUrl(url);
-  const status = sourceRegistry.itemStatus(project, { url: normalizedUrl, aliases: [normalizedUrl] });
+  const status = getEffectiveItemStatus(project, { url: normalizedUrl, aliases: [normalizedUrl] });
   const action = status === "saved" ? "uncollect" : "collect";
   if (action === "uncollect") {
     const confirmed = window.confirm("Are you sure you want to uncollect this item?");
@@ -3403,7 +3577,7 @@ async function toggleIgnoreItemFromUrl(url, label = "") {
     return;
   }
   const normalizedUrl = ensureUrl(url);
-  const status = sourceRegistry.itemStatus(project, { url: normalizedUrl, aliases: [normalizedUrl] });
+  const status = getEffectiveItemStatus(project, { url: normalizedUrl, aliases: [normalizedUrl] });
   if (status === "saved") {
     setMessage("Collected items must be uncollected before they can be ignored.");
     return;
@@ -3535,8 +3709,6 @@ async function updateCaptureState() {
   const activeTab = getActiveTab();
   elements.captureCollect.disabled = !project || !getDisplayedItem();
   elements.captureIgnore.disabled = !project || !getDisplayedItem();
-  elements.captureOpenPage.disabled = !getDisplayedItem()?.url;
-
   if (!activeTab) {
     elements.pageStatus.textContent = "Ready";
     elements.pageKind.className = "page-kind";
@@ -3644,7 +3816,7 @@ async function updateCaptureState() {
     return;
   }
 
-  const status = sourceRegistry.itemStatus(project, item);
+  const status = getEffectiveItemStatus(project, item);
   elements.pageStatus.textContent = item.title;
   elements.pageKind.className = "page-kind";
   elements.pageKind.textContent = `${item.sourceLabel} · ${formatItemType(item.type)}`;
@@ -3899,10 +4071,6 @@ elements.pluginCopyProbeCommand.addEventListener("click", async () => {
   setMessage("Copied source probe command.");
 });
 
-elements.troveLinkExtractorButton?.addEventListener("click", () => {
-  openTroveLinkDialog();
-});
-
 elements.troveLinkDialogInput?.addEventListener("input", () => {
   updateTroveLinkDialogFromInput();
 });
@@ -3983,14 +4151,6 @@ elements.debugForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void runDebugCommand(elements.debugCommand.value);
 });
-elements.captureOpenPage.addEventListener("click", () => {
-  const item = getDisplayedItem();
-  if (!item?.url) {
-    return;
-  }
-  createTab(item.url);
-});
-
 elements.captureCopyMarkdown.addEventListener("click", async () => {
   const markdown = getDisplayedMarkdown();
   if (!String(markdown || "").trim()) {
@@ -4036,7 +4196,7 @@ elements.captureCollect.addEventListener("click", async () => {
   }
   const currentItem = getDisplayedItem();
   const target = currentItem || { url: ensureUrl(getActiveTab()?.url || "") };
-  const currentStatus = target ? sourceRegistry.itemStatus(project, target) : "";
+  const currentStatus = target ? getEffectiveItemStatus(project, target) : "";
   const action = currentStatus === "saved" ? "uncollect" : "collect";
   if (action === "uncollect") {
     const confirmed = window.confirm("Are you sure you want to uncollect this item?");
@@ -4062,7 +4222,7 @@ elements.captureIgnore.addEventListener("click", async () => {
   }
   const currentItem = getDisplayedItem();
   const target = currentItem || { url: ensureUrl(getActiveTab()?.url || "") };
-  const currentStatus = target ? sourceRegistry.itemStatus(project, target) : "";
+  const currentStatus = target ? getEffectiveItemStatus(project, target) : "";
   if (currentStatus === "saved") {
     setMessage("Collected items must be uncollected before they can be ignored.");
     return;

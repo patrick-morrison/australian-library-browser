@@ -769,8 +769,21 @@
           }
           return "";
         };
+        const getEffectiveStatusForHref = (href, loadingAction = "") => {
+          if (loadingAction === "collect") {
+            return "saved";
+          }
+          if (loadingAction === "ignore") {
+            return "ignored";
+          }
+          if (loadingAction === "uncollect" || loadingAction === "unignore") {
+            return "";
+          }
+          return resolveStatusForHref(href);
+        };
         const resolveEntryStatus = (anchor, href) => {
-          const directStatus = resolveStatusForHref(href);
+          const loadingEntry = window[stateKey]?.loadingByUrl?.[normalize(href)] || null;
+          const directStatus = getEffectiveStatusForHref(href, loadingEntry?.action || "");
           if (directStatus) {
             return directStatus;
           }
@@ -783,7 +796,11 @@
           }
           const linkStatuses = Array.from(entryContainer.querySelectorAll("a[href]"))
             .filter((node) => isEntryLink(node, node.href))
-            .map((node) => resolveStatusForHref(node.href))
+            .map((node) => {
+              const nodeHref = normalize(node.href);
+              const nodeLoadingEntry = window[stateKey]?.loadingByUrl?.[nodeHref] || null;
+              return getEffectiveStatusForHref(node.href, nodeLoadingEntry?.action || "");
+            })
             .filter(Boolean);
           return linkStatuses.includes("saved") ? "saved" : linkStatuses.includes("ignored") ? "ignored" : "";
         };
@@ -851,19 +868,19 @@
           if (!href) {
             return;
           }
-          const entryStatus = resolveStatusForHref(href);
           const loadingByUrl = window[stateKey]?.loadingByUrl || {};
           const loadingEntry = loadingByUrl[href] || null;
           const loadingAction = loadingEntry?.action || "";
           const loadingLabel = loadingEntry?.label || "";
+          const effectiveStatus = getEffectiveStatusForHref(href, loadingAction);
           const entryContainer = getControlsEntryContainer(controls);
           const preview = controls.querySelector(".preview");
           const collect = controls.querySelector(".collect");
           const ignore = controls.querySelector(".ignore");
 
           entryContainer?.classList.remove("trove-library-entry-saved", "trove-library-entry-ignored");
-          if (entryStatus === "saved" || entryStatus === "ignored") {
-            entryContainer?.classList.add(entryStatus === "saved" ? "trove-library-entry-saved" : "trove-library-entry-ignored");
+          if (effectiveStatus === "saved" || effectiveStatus === "ignored") {
+            entryContainer?.classList.add(effectiveStatus === "saved" ? "trove-library-entry-saved" : "trove-library-entry-ignored");
           }
 
           if (preview) {
@@ -875,29 +892,44 @@
             collect.classList.remove("saved", "ignored");
             collect.classList.toggle("is-loading", loadingAction === "collect" || loadingAction === "uncollect");
             collect.disabled = loadingAction === "collect" || loadingAction === "uncollect";
-            if (entryStatus === "saved") {
+            if (effectiveStatus === "saved") {
               collect.classList.add("saved");
-              collect.textContent = loadingAction === "uncollect" ? loadingLabel || "Removing…" : "Collected";
+              collect.textContent =
+                loadingAction === "collect"
+                  ? loadingLabel || "Collecting…"
+                  : loadingAction === "uncollect"
+                    ? loadingLabel || "Removing…"
+                    : "Collected";
               collect.disabled = loadingAction === "uncollect";
             } else {
-              collect.textContent = loadingAction === "collect" ? loadingLabel || "Collecting…" : "Collect";
+              collect.textContent =
+                loadingAction === "uncollect"
+                  ? loadingLabel || "Removing…"
+                  : loadingAction === "collect"
+                    ? loadingLabel || "Collecting…"
+                    : "Collect";
             }
           }
           if (ignore) {
             ignore.classList.remove("ignored");
             ignore.classList.toggle("is-loading", loadingAction === "ignore" || loadingAction === "unignore");
-            ignore.disabled = loadingAction === "ignore" || loadingAction === "unignore";
-            if (entryStatus === "saved") {
+            ignore.disabled = loadingAction === "unignore";
+            if (effectiveStatus === "saved") {
               ignore.textContent = "Ignore";
               ignore.hidden = true;
               ignore.disabled = true;
-            } else if (entryStatus === "ignored") {
+            } else if (effectiveStatus === "ignored") {
               ignore.classList.add("ignored");
               ignore.textContent = loadingAction === "unignore" ? loadingLabel || "Unignoring…" : "Unignore";
               ignore.hidden = false;
               ignore.disabled = loadingAction === "unignore";
             } else {
-              ignore.textContent = loadingAction === "ignore" ? loadingLabel || "Ignoring…" : "Ignore";
+              ignore.textContent =
+                loadingAction === "unignore"
+                  ? loadingLabel || "Unignoring…"
+                  : loadingAction === "ignore"
+                    ? loadingLabel || "Ignoring…"
+                    : "Ignore";
               ignore.hidden = false;
             }
           }
@@ -940,6 +972,16 @@
               align-items: center;
               justify-content: center;
               gap: 6px;
+              white-space: nowrap;
+            }
+            .\${actionClass} .preview {
+              min-inline-size: 88px;
+            }
+            .\${actionClass} .collect {
+              min-inline-size: 104px;
+            }
+            .\${actionClass} .ignore {
+              min-inline-size: 96px;
             }
             .\${actionClass} button.is-loading {
               opacity: 0.92;

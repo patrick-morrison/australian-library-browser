@@ -1,0 +1,28 @@
+name: Preview Drift Debug 1775101092816
+slug: preview-drift-debug-1775101092816
+createdAt: '2026-04-02T03:38:13.356Z'
+updatedAt: '2026-04-02T03:38:16.672Z'
+folders:
+  newspapers: newspapers
+  images: images
+  debug: debug
+  searches: searches
+saved:
+  - key: trove:newspaper:209256127
+    source: trove
+    sourceLabel: Trove
+    id: '209256127'
+    type: newspaper
+    title: 'Wellington Dam Capacity - The Narrogin Observer (WA : 1918 - 1955) - 14 Aug 1953'
+    url: https://trove.nla.gov.au/newspaper/article/209256127
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/209256127
+      - https://trove.nla.gov.au/newspaper/article/209256127?searchTerm=Wellington%20Dam
+      - https://nla.gov.au/nla.news-article209256127
+    citation: >-
+      1953 'Wellington Dam Capacity', The Narrogin Observer (WA : 1918 - 1955), 14 August, p. 21. , viewed 02 Apr 2026,
+      http://nla.gov.au/nla.news-article209256127
+    file: newspapers/wellington-dam-capacity-the-narrogin-observer-wa-1918-1955-14-aug-1953-209256127.md
+    savedAt: '2026-04-02T03:38:16.671Z'
+ignored: []
+uncollected: []

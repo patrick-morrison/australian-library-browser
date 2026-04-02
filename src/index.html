@@ -71,7 +71,6 @@
             <div class="capture-actions">
               <button id="capture-collect" type="button" class="primary-action" disabled>Collect</button>
               <button id="capture-ignore" type="button" class="secondary-action" disabled>Ignore</button>
-              <button id="capture-open-page" type="button" class="ghost-button">Open Page</button>
             </div>
             <div id="capture-progress" class="capture-progress" hidden></div>
             <section id="capture-image-section" class="capture-section" hidden>
@@ -196,14 +195,6 @@
               <h2>Integration Prompt</h2>
               <pre id="plugin-prompt-output" class="plugin-prompt-output"></pre>
             </article>
-            <article class="plugins-card">
-              <h2>Open Trove Links From Text</h2>
-              <p class="message-text">Paste rough notes, article text, or a messy block of research links. The app will extract Trove references and open them all as tabs.</p>
-              <div class="plugins-actions">
-                <button id="trove-link-extractor-button" type="button" class="primary-action">Paste Text</button>
-              </div>
-              <p id="trove-link-extractor-status" class="message-text">Looks for Trove article, work, and search URLs inside unstructured text.</p>
-            </article>
           </div>
         </section>
 
@@ -296,9 +287,9 @@
           <div id="trove-link-dialog-backdrop" class="project-dialog-backdrop"></div>
           <div class="project-dialog-card trove-link-dialog-card">
             <div class="section-title-row">
-              <h2>Open Trove Links</h2>
+              <h2>Paste Trove Links</h2>
             </div>
-            <p class="message-text">Paste unstructured text, research notes, or a published article. Any Trove links found inside will open as new tabs.</p>
+            <p class="message-text">Paste notes, article text, or a rough link dump. Trove URLs will be pulled out, checked, and opened together as tabs.</p>
             <label class="project-dialog-label" for="trove-link-dialog-input">Source text</label>
             <textarea id="trove-link-dialog-input" class="plugins-textarea trove-link-dialog-input" spellcheck="false" placeholder="Paste notes or article text with Trove links here"></textarea>
             <div id="trove-link-dialog-status" class="message-text">No Trove links found yet.</div>
