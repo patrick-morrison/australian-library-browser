@@ -73,7 +73,28 @@ jobs:
         with:
           path: release-assets
 
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+          Desktop app for collecting material from Trove and SLWA into self-describing research libraries on disk.
+
+          Download one file for your platform:
+
+          - macOS: `australian-library-browser-<version>-mac-arm64.zip`
+          - Windows: `australian-library-browser-<version>-windows.exe`
+          - Linux: `australian-library-browser-<version>-linux.AppImage`
+
+          The app saves markdown, images, and metadata into a normal local folder so the material can be searched and worked across later.
+
+          If you want to run it from source instead:
+
+          ```bash
+          npm install
+          npm start
+          ```
+          EOF
+
       - uses: softprops/action-gh-release@v2
         with:
           files: release-assets/**/*
-          generate_release_notes: true
+          body_path: release-notes.md
