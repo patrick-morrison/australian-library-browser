@@ -137,6 +137,20 @@
             <button id="new-tab-button" type="button" class="accent-button">New Tab</button>
             <button id="debug-toggle" type="button" class="ghost-button">Debug</button>
           </div>
+          <div id="page-find-bar" class="page-find-bar" hidden>
+            <input
+              id="page-find-input"
+              type="search"
+              class="page-find-input"
+              placeholder="Find on page"
+              spellcheck="false"
+              aria-label="Find on current page"
+            >
+            <span id="page-find-count" class="page-find-count">0/0</span>
+            <button id="page-find-prev" type="button" class="page-find-button ghost-button" aria-label="Previous match">↑</button>
+            <button id="page-find-next" type="button" class="page-find-button ghost-button" aria-label="Next match">↓</button>
+            <button id="page-find-close" type="button" class="page-find-button ghost-button" aria-label="Close page find">✕</button>
+          </div>
           <div id="tabs" class="tabs"></div>
         </header>
 
@@ -287,15 +301,16 @@
           <div id="trove-link-dialog-backdrop" class="project-dialog-backdrop"></div>
           <div class="project-dialog-card trove-link-dialog-card">
             <div class="section-title-row">
-              <h2>Paste Trove Links</h2>
+              <h2 id="trove-link-dialog-title">Paste Trove Links</h2>
             </div>
-            <p class="message-text">Paste notes, article text, or a rough link dump. Trove URLs will be pulled out, checked, and opened together as tabs.</p>
-            <label class="project-dialog-label" for="trove-link-dialog-input">Source text</label>
+            <p id="trove-link-dialog-copy" class="message-text">Paste notes, article text, or a rough link dump. Trove URLs will be pulled out, checked, and opened together as tabs.</p>
+            <label id="trove-link-dialog-label" class="project-dialog-label" for="trove-link-dialog-input">Source text</label>
             <textarea id="trove-link-dialog-input" class="plugins-textarea trove-link-dialog-input" spellcheck="false" placeholder="Paste notes or article text with Trove links here"></textarea>
             <div id="trove-link-dialog-status" class="message-text">No Trove links found yet.</div>
             <div id="trove-link-dialog-preview" class="trove-link-dialog-preview empty-state">Paste text to preview extracted Trove links.</div>
             <div class="project-dialog-actions">
               <button id="trove-link-dialog-cancel" type="button" class="ghost-button">Cancel</button>
+              <button id="trove-link-dialog-open-unresolved" type="button" class="ghost-button" disabled>Open Unresolved</button>
               <button id="trove-link-dialog-open" type="button" class="primary-action" disabled>Open Tabs</button>
             </div>
           </div>

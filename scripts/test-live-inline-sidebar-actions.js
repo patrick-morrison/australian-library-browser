@@ -67,6 +67,7 @@ async function run() {
     const previewTarget = "https://trove.nla.gov.au/newspaper/article/260382127";
     const collectTarget = "https://trove.nla.gov.au/newspaper/article/209256127";
     const ignoreTarget = "https://trove.nla.gov.au/newspaper/article/253406851";
+    const ignorePersistTarget = "https://trove.nla.gov.au/newspaper/article/32575438";
 
     await clickInlineAction(page, { action: "preview", urlMatch: previewTarget });
     await waitForInlineState(page, { action: "preview", urlMatch: previewTarget, expectText: "Previewing…" }, 10000);
@@ -164,7 +165,19 @@ async function run() {
 
     const unignoreShot = await screenshot(page, "live-inline-unignore-cleared.png");
 
+    await clickInlineAction(page, { action: "ignore", urlMatch: ignorePersistTarget });
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignorePersistTarget, expectText: "Ignoring…" }, 10000);
     await navigate(page, "https://trove.nla.gov.au/newspaper/article/85178391");
+    manifest = await waitForManifest(
+      project.projectDir,
+      project.projectSlug,
+      (doc) =>
+        Array.isArray(doc?.saved) &&
+        doc.saved.length === 1 &&
+        Array.isArray(doc?.ignored) &&
+        doc.ignored.length === 1
+    );
+
     await waitForPreview(page, "text", {
       markdownIncludes: "https://trove.nla.gov.au/newspaper/article/85178391"
     });
@@ -202,7 +215,7 @@ async function run() {
         Array.isArray(doc?.saved) &&
         doc.saved.length === 2 &&
         Array.isArray(doc?.ignored) &&
-        doc.ignored.length === 1
+        doc.ignored.length === 2
     );
 
     const sidebarIgnoreShot = await screenshot(page, "live-sidebar-ignore-unignore.png");

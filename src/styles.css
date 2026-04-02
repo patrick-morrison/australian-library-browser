@@ -508,13 +508,18 @@ button.is-acknowledged {
 
 .toolbar-row {
   display: grid;
-  grid-template-columns: 42px 42px 42px minmax(220px, 1fr) auto auto auto auto auto;
+  grid-template-columns: 42px 42px 42px minmax(220px, 1fr) auto auto auto auto;
   gap: 8px;
   align-items: center;
 }
 
 .toolbar-row > * {
   min-width: 0;
+}
+
+.address-form {
+  min-width: 0;
+  width: 100%;
 }
 
 .toolbar-row .ghost-button,
@@ -669,6 +674,42 @@ button.is-acknowledged {
   background: rgba(157, 63, 38, 0.1);
 }
 
+.page-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 0 2px;
+}
+
+.page-find-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 93, 65, 0.18);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  outline: none;
+}
+
+.page-find-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.page-find-button {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  line-height: 1;
+}
+
 .capture-actions .ghost-button,
 .capture-actions .primary-action,
 .capture-actions .secondary-action {
@@ -691,10 +732,12 @@ button.is-acknowledged {
 
 .tabs {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   overflow: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pinch-zoom;
   padding-bottom: 0;
   scrollbar-width: thin;
 }
@@ -703,14 +746,32 @@ button.is-acknowledged {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 8px;
-  min-width: 210px;
-  max-width: 310px;
-  padding: 11px 14px;
+  gap: 6px;
+  min-width: 160px;
+  max-width: 230px;
+  padding: 8px 10px;
   border: 1px solid rgba(120, 93, 65, 0.18);
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.68);
   cursor: pointer;
+}
+
+.tab-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tab.is-saved {
+  border-color: rgba(95, 149, 90, 0.28);
+  background: rgba(129, 186, 123, 0.1);
+}
+
+.tab.is-ignored {
+  border-color: rgba(120, 93, 65, 0.22);
+  background: rgba(120, 93, 65, 0.08);
+  color: rgba(49, 39, 30, 0.76);
 }
 
 .tab.is-active {
@@ -718,15 +779,38 @@ button.is-acknowledged {
   background: rgba(157, 63, 38, 0.1);
 }
 
+.tab.is-active.is-saved {
+  border-color: rgba(95, 149, 90, 0.42);
+  background: rgba(129, 186, 123, 0.16);
+}
+
+.tab.is-active.is-ignored {
+  border-color: rgba(120, 93, 65, 0.34);
+  background: rgba(120, 93, 65, 0.12);
+}
+
 .tab-label {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.tab-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(120, 93, 65, 0.1);
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
 .tab-close {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -1204,6 +1288,23 @@ button.is-acknowledged {
   font-weight: 700;
 }
 
+.trove-link-preview-status {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.trove-link-preview-status.is-saved {
+  background: rgba(47, 107, 87, 0.14);
+  color: #2f6b57;
+}
+
+.trove-link-preview-status.is-ignored {
+  background: rgba(120, 93, 65, 0.12);
+  color: var(--muted);
+}
+
 .trove-link-preview-summary {
   color: var(--ink);
   font-size: 0.95rem;
@@ -1439,9 +1540,9 @@ button.is-acknowledged {
 }
 
 .app-shell.mode-collect .tab {
-  min-width: 180px;
-  max-width: 260px;
-  padding: 7px 10px;
+  min-width: 140px;
+  max-width: 200px;
+  padding: 6px 8px;
 }
 
 .app-shell.mode-collect #action-bar {
