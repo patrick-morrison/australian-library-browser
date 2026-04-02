@@ -15,6 +15,9 @@ const customUserDataDir = String(process.env.TROVE_BROWSER_USER_DATA_DIR || "").
 if (customUserDataDir) {
   app.setPath("userData", path.resolve(customUserDataDir));
 }
+if (process.env.TROVE_BROWSER_DISABLE_GPU === "1") {
+  app.disableHardwareAcceleration();
+}
 const WEBVIEW_PARTITION = "persist:trove-library";
 const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +

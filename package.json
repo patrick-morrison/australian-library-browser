@@ -22,6 +22,8 @@
     "inspect:pages": "node scripts/inspect-pages.js",
     "open:tabs": "node scripts/open-tabs-cli.js",
     "debug:inline": "node scripts/debug-inline-actions.js",
+    "profile:flow": "node scripts/profile-collection-flow.js",
+    "profile:search": "node scripts/profile-rapid-search.js",
     "probe:source": "node scripts/probe-source.js",
     "collect:curated": "node scripts/collect-curated-projects.js"
   },

@@ -45,6 +45,33 @@ async function waitForCaptureVisible(page, timeout = 15000) {
   }, null, { timeout });
 }
 
+async function waitForCaptureMarkdownContains(page, needle, timeout = 30000) {
+  const normalizedNeedle = String(needle || "").toLowerCase();
+  await page.waitForFunction(
+    (textNeedle) => {
+      const markdown = document.querySelector("#capture-markdown")?.innerText || "";
+      return markdown.toLowerCase().includes(textNeedle);
+    },
+    normalizedNeedle,
+    { timeout }
+  );
+}
+
+async function readCaptureSnapshot(page) {
+  return page.evaluate(() => {
+    const markdown = document.querySelector("#capture-markdown")?.innerText || "";
+    const collectText = document.querySelector("#capture-collect")?.textContent || "";
+    const ignoreText = document.querySelector("#capture-ignore")?.textContent || "";
+    const emptyHidden = Boolean(document.querySelector("#capture-empty")?.hidden);
+    return {
+      markdown,
+      collectText: String(collectText).replace(/\s+/g, " ").trim(),
+      ignoreText: String(ignoreText).replace(/\s+/g, " ").trim(),
+      emptyHidden
+    };
+  });
+}
+
 async function run() {
   const projectName = `Inline Sidebar Actions ${Date.now()}`;
   const app = await launchApp();
@@ -56,19 +83,32 @@ async function run() {
     project = await createProject(page, projectName);
 
     await navigate(page, "https://trove.nla.gov.au/search/category/newspapers?keyword=Wellington%20Dam&l-state=Western%20Australia");
-    await waitForInlineActions(page, 3, 60000);
+    await waitForInlineActions(page, 4, 60000);
 
-    const previewTarget = "western mail";
-    await clickInlineAction(page, { action: "preview", textMatch: previewTarget });
-    await waitForInlineState(page, { textMatch: previewTarget, expectText: "Previewing…" }, 10000);
-    await waitForPreview(page, "text", { timeout: 120000 });
-    await waitForCaptureVisible(page, 15000);
+    const previewTarget = "https://trove.nla.gov.au/newspaper/article/260382127";
+    const collectTarget = "https://trove.nla.gov.au/newspaper/article/209256127";
+    const ignoreTarget = "https://trove.nla.gov.au/newspaper/article/253406851";
 
-    const collectTarget = "narrogin observer";
-    await clickInlineAction(page, { action: "collect", textMatch: collectTarget });
-    await waitForInlineState(page, { textMatch: collectTarget, expectText: "Collecting…" }, 10000);
-    await waitForCaptureVisible(page, 15000);
-    await waitForInlineState(page, { textMatch: collectTarget, expectText: "Collected" }, 120000);
+    await clickInlineAction(page, { action: "preview", urlMatch: previewTarget });
+    await waitForInlineState(page, { action: "preview", urlMatch: previewTarget, expectText: "Previewing…" }, 10000);
+    await waitForCaptureVisible(page, 30000);
+    await waitForCaptureMarkdownContains(page, "https://trove.nla.gov.au/newspaper/article/260382127", 30000);
+    const previewShot = await screenshot(page, "live-inline-preview-loaded.png");
+    const previewSnapshot = await readCaptureSnapshot(page);
+    if (!previewSnapshot.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
+      throw new Error("Preview pane did not settle on the previewed search result.");
+    }
+
+    await clickInlineAction(page, { action: "collect", urlMatch: collectTarget });
+    await waitForInlineState(page, { action: "collect", urlMatch: collectTarget, expectText: "Collecting…" }, 10000);
+    const duringCollect = await readCaptureSnapshot(page);
+    if (!duringCollect.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
+      throw new Error("Preview pane was contaminated by inline collect on another row.");
+    }
+    if (/collecting/i.test(duringCollect.collectText)) {
+      throw new Error("Sidebar collect button should not enter collecting state for another row's inline collect.");
+    }
+    await waitForInlineState(page, { action: "collect", urlMatch: collectTarget, expectText: "Collected" }, 120000);
 
     let manifest = await waitForManifest(
       project.projectDir,
@@ -77,16 +117,14 @@ async function run() {
     );
 
     const collectShot = await screenshot(page, "live-inline-collect-collected.png");
+    const afterCollectSnapshot = await readCaptureSnapshot(page);
+    if (!afterCollectSnapshot.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
+      throw new Error("Preview pane changed after inline collect on a different row.");
+    }
 
-    const ignoreTarget = previewTarget;
-    await clickInlineAction(page, { action: "ignore", textMatch: ignoreTarget });
-    await waitForInlineState(page, { textMatch: ignoreTarget, expectText: "Ignoring…" }, 10000);
-    await waitForCaptureVisible(page, 15000);
-    await waitForInlineState(page, { textMatch: ignoreTarget, expectText: "Unignore", rowOpacity: 0.6 }, 120000);
-    await page.waitForFunction(() => {
-      const button = document.querySelector("#capture-ignore");
-      return Boolean(button && /Unignore/i.test(button.textContent || ""));
-    }, null, { timeout: 120000 });
+    await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Ignoring…" }, 10000);
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Unignore", rowOpacity: 0.6 }, 120000);
 
     manifest = await waitForManifest(
       project.projectDir,
@@ -99,6 +137,10 @@ async function run() {
     );
 
     const ignoreShot = await screenshot(page, "live-inline-ignore-greyed.png");
+    const afterIgnoreSnapshot = await readCaptureSnapshot(page);
+    if (!afterIgnoreSnapshot.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
+      throw new Error("Preview pane changed after inline ignore on a different row.");
+    }
 
     await navigate(page, "https://trove.nla.gov.au/newspaper/article/85178391");
     await waitForPreview(page, "text", {
@@ -150,7 +192,7 @@ async function run() {
           projectDir: project.projectDir,
           savedCount: manifest.saved.length,
           ignoredCount: manifest.ignored.length,
-          screenshots: [collectShot, ignoreShot, sidebarCollectShot, sidebarIgnoreShot]
+          screenshots: [previewShot, collectShot, ignoreShot, sidebarCollectShot, sidebarIgnoreShot]
         },
         null,
         2

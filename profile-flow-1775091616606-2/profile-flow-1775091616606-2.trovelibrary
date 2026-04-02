@@ -1,0 +1,205 @@
+name: Profile Flow 1775091616606
+slug: profile-flow-1775091616606
+createdAt: '2026-04-02T01:00:18.259Z'
+updatedAt: '2026-04-02T03:27:33.390Z'
+folders:
+  newspapers: newspapers
+  images: images
+  debug: debug
+  searches: searches
+saved:
+  - key: slwa:image:slwa_b3507746
+    source: slwa
+    sourceLabel: SLWA
+    id: slwa_b3507746
+    type: image
+    title: Wellington Dam Campsite.
+    url: https://purl.slwa.wa.gov.au/slwa_b3507746
+    aliases:
+      - https://purl.slwa.wa.gov.au/slwa_b3507746
+      - https://encore.slwa.wa.gov.au/iii/encore/record/C__Rb3507746
+      - https://purl.slwa.wa.gov.au/slwa_b3507746_1
+      - https://purl.slwa.wa.gov.au/slwa_b3507746_1.png
+      - https://purl.slwa.wa.gov.au/slwa_b3507746_1.jpg
+      - https://purl.slwa.wa.gov.au/download/slwa_b3507746_1.jpg
+    citation: Wellington Dam Campsite.. State Library of Western Australia. http://purl.slwa.wa.gov.au/slwa_b3507746
+    imageUrl: https://purl.slwa.wa.gov.au/slwa_b3507746_1.jpg
+    imageUrls:
+      - https://purl.slwa.wa.gov.au/slwa_b3507746_1.jpg
+    assetFile: images/wellington-dam-campsite-slwa_b3507746.jpg
+    metadataFile: images/wellington-dam-campsite-slwa_b3507746.md
+    assetFiles:
+      - images/wellington-dam-campsite-slwa_b3507746.jpg
+    metadataFiles:
+      - images/wellington-dam-campsite-slwa_b3507746.md
+    savedAt: '2026-04-02T01:00:23.991Z'
+  - key: trove:newspaper:260382127
+    source: trove
+    sourceLabel: Trove
+    id: '260382127'
+    type: newspaper
+    title: 'Wellington Dam - The Narrogin Observer (WA : 1918 - 1955) - 13 Feb 1948'
+    url: https://trove.nla.gov.au/newspaper/article/260382127
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/260382127
+      - https://trove.nla.gov.au/newspaper/article/260382127?searchTerm=Wellington%20Dam
+      - https://nla.gov.au/nla.news-article260382127
+    citation: >-
+      1948 'Wellington Dam', The Narrogin Observer (WA : 1918 - 1955), 13 February, p. 1. , viewed 02 Apr 2026,
+      http://nla.gov.au/nla.news-article260382127
+    file: newspapers/wellington-dam-the-narrogin-observer-wa-1918-1955-13-feb-1948-260382127.md
+    savedAt: '2026-04-02T02:57:26.290Z'
+  - key: trove:newspaper:85178391
+    source: trove
+    sourceLabel: Trove
+    id: '85178391'
+    type: newspaper
+    title: 'WELLINGTON DAM OPENING - The Daily News (Perth, WA : 1882 - 1955) - 4 Dec 1933'
+    url: https://trove.nla.gov.au/newspaper/article/85178391
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/85178391
+      - https://trove.nla.gov.au/newspaper/article/85178391?searchTerm=Wellington%20Dam
+      - https://nla.gov.au/nla.news-article85178391
+    citation: >-
+      1933 'WELLINGTON DAM OPENING', The Daily News (Perth, WA : 1882 - 1955), 4 December, p. 6. (LATE CITY), viewed 02
+      Apr 2026, http://nla.gov.au/nla.news-article85178391
+    file: newspapers/wellington-dam-opening-the-daily-news-perth-wa-1882-1955-4-dec-1933-85178391.md
+    savedAt: '2026-04-02T02:58:05.064Z'
+  - key: trove:newspaper:161655188
+    source: trove
+    sourceLabel: Trove
+    id: '161655188'
+    type: newspaper
+    title: 'WELLINGTON DAM SCHEME - National Advocate (Bathurst, NSW : 1889 - 1954) - 20 Aug 1949'
+    url: https://trove.nla.gov.au/newspaper/article/161655188
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/161655188
+      - https://trove.nla.gov.au/newspaper/article/161655188?searchTerm=Wellington%20Dam
+      - https://nla.gov.au/nla.news-article161655188
+    citation: >-
+      1949 'WELLINGTON DAM SCHEME', National Advocate (Bathurst, NSW : 1889 - 1954), 20 August, p. 3. , viewed 02 Apr
+      2026, http://nla.gov.au/nla.news-article161655188
+    file: newspapers/wellington-dam-scheme-national-advocate-bathurst-nsw-1889-1954-20-aug-1949-161655188.md
+    savedAt: '2026-04-02T02:59:23.916Z'
+  - key: trove:newspaper:208139735
+    source: trove
+    sourceLabel: Trove
+    id: '208139735'
+    type: newspaper
+    title: 'SWAN RIVER RACES - Kew Boat Christened - Truth (Perth, WA : 1903 - 1931) - 22 Apr 1928'
+    url: https://trove.nla.gov.au/newspaper/article/208139735
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/208139735
+      - https://trove.nla.gov.au/newspaper/article/208139735?searchTerm=Swan%20River%20boat
+      - https://nla.gov.au/nla.news-article208139735
+    citation: >-
+      1928 'SWAN RIVER RACES', Truth (Perth, WA : 1903 - 1931), 22 April, p. 5. , viewed 02 Apr 2026,
+      http://nla.gov.au/nla.news-article208139735
+    file: newspapers/swan-river-races-kew-boat-christened-truth-perth-wa-1903-1931-22-apr-1928-208139735.md
+    savedAt: '2026-04-02T03:01:31.191Z'
+  - key: trove:newspaper:67033732
+    source: trove
+    sourceLabel: Trove
+    id: '67033732'
+    type: newspaper
+    title: >-
+      SWAN RIVER ROWING CLUB. - NEW BOAT HOUSE. - The Inquirer and Commercial News (Perth, WA : 1855 - 1901) - 20 Jan
+      1899
+    url: https://trove.nla.gov.au/newspaper/article/67033732
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/67033732
+      - https://trove.nla.gov.au/newspaper/article/67033732?searchTerm=Swan%20River%20boat
+      - https://nla.gov.au/nla.news-article67033732
+    citation: >-
+      1899 'SWAN RIVER ROWING CLUB.', The Inquirer and Commercial News (Perth, WA : 1855 - 1901), 20 January, p. 10. ,
+      viewed 02 Apr 2026, http://nla.gov.au/nla.news-article67033732
+    file: newspapers/swan-river-rowing-club-new-boat-house-the-inquirer-and-commercial-news-perth-wa--67033732.md
+    savedAt: '2026-04-02T03:12:09.847Z'
+  - key: trove:newspaper:67070098
+    source: trove
+    sourceLabel: Trove
+    id: '67070098'
+    type: newspaper
+    title: 'FREMANTLE. - CENTRAL FREMANTLE. - The Inquirer and Commercial News (Perth, WA : 1855 - 1901) - 26 Apr 1901'
+    url: https://trove.nla.gov.au/newspaper/article/67070098
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/67070098
+      - https://trove.nla.gov.au/newspaper/article/67070098?searchTerm=Fremantle
+      - https://nla.gov.au/nla.news-article67070098
+    citation: >-
+      1901 'FREMANTLE.', The Inquirer and Commercial News (Perth, WA : 1855 - 1901), 26 April, p. 10. , viewed 02 Apr
+      2026, http://nla.gov.au/nla.news-article67070098
+    file: newspapers/fremantle-central-fremantle-the-inquirer-and-commercial-news-perth-wa-1855-1901--67070098.md
+    savedAt: '2026-04-02T03:26:40.481Z'
+  - key: trove:newspaper:58257929
+    source: trove
+    sourceLabel: Trove
+    id: '58257929'
+    type: newspaper
+    title: 'FREMANTLE ASSOCIATION - Fremantle v. North Fremantle - Sunday Times (Perth, WA : 1902 - 1955) - 10 May 1925'
+    url: https://trove.nla.gov.au/newspaper/article/58257929
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/58257929
+      - https://trove.nla.gov.au/newspaper/article/58257929?searchTerm=Fremantle
+      - https://nla.gov.au/nla.news-article58257929
+    citation: >-
+      1925 'FREMANTLE ASSOCIATION', Sunday Times (Perth, WA : 1902 - 1955), 10 May, p. 1. , viewed 02 Apr 2026,
+      http://nla.gov.au/nla.news-article58257929
+    file: newspapers/fremantle-association-fremantle-v-north-fremantle-sunday-times-perth-wa-1902-195-58257929.md
+    savedAt: '2026-04-02T03:27:14.123Z'
+  - key: trove:newspaper:57212044
+    source: trove
+    sourceLabel: Trove
+    id: '57212044'
+    type: newspaper
+    title: 'FREMANTLE ASSOCIATION. - EAST FREMANTLE V. FREMANTLE - Sunday Times (Perth, WA : 1902 - 1955) - 1 Apr 1906'
+    url: https://trove.nla.gov.au/newspaper/article/57212044
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/57212044
+      - https://trove.nla.gov.au/newspaper/article/57212044?searchTerm=Fremantle
+      - https://nla.gov.au/nla.news-article57212044
+    citation: >-
+      1906 'FREMANTLE ASSOCIATION.', Sunday Times (Perth, WA : 1902 - 1955), 1 April, p. 2. , viewed 02 Apr 2026,
+      http://nla.gov.au/nla.news-article57212044
+    file: newspapers/fremantle-association-east-fremantle-v-fremantle-sunday-times-perth-wa-1902-1955-57212044.md
+    savedAt: '2026-04-02T03:27:30.177Z'
+  - key: trove:newspaper:212402278
+    source: trove
+    sourceLabel: Trove
+    id: '212402278'
+    type: newspaper
+    title: 'FREMANTLE. - The W.A. Record (Perth, WA : 1888 - 1922) - 24 Sept 1921'
+    url: https://trove.nla.gov.au/newspaper/article/212402278
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/212402278
+      - https://trove.nla.gov.au/newspaper/article/212402278?searchTerm=Fremantle
+      - https://nla.gov.au/nla.news-article212402278
+    citation: >-
+      1921 'FREMANTLE.', The W.A. Record (Perth, WA : 1888 - 1922), 24 September, p. 7. , viewed 02 Apr 2026,
+      http://nla.gov.au/nla.news-article212402278
+    file: newspapers/fremantle-the-w-a-record-perth-wa-1888-1922-24-sept-1921-212402278.md
+    savedAt: '2026-04-02T03:27:33.389Z'
+ignored:
+  - key: trove:newspaper:23841036
+    source: trove
+    sourceLabel: TROVE
+    id: '23841036'
+    type: newspaper
+    title: FREMANTLE ELECTORATES. FREMANTLE.
+    url: https://trove.nla.gov.au/newspaper/article/23841036?searchTerm=Fremantle
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/23841036?searchTerm=Fremantle
+    citation: ''
+    ignoredAt: '2026-04-02T03:26:42.450Z'
+  - key: trove:newspaper:33191605
+    source: trove
+    sourceLabel: TROVE
+    id: '33191605'
+    type: newspaper
+    title: FREMANTLE ELECTORATES. FREMANTLE.
+    url: https://trove.nla.gov.au/newspaper/article/33191605?searchTerm=Fremantle
+    aliases:
+      - https://trove.nla.gov.au/newspaper/article/33191605?searchTerm=Fremantle
+    citation: ''
+    ignoredAt: '2026-04-02T03:26:48.113Z'
+uncollected: []

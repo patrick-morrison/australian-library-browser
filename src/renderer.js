@@ -24,11 +24,13 @@ const state = {
   saveProgress: null,
   actionQueue: [],
   actionQueueRunning: false,
+  currentQueueJob: null,
   queuedActionIds: new Set(),
   actionNonce: 0,
   previewActionId: "",
   previewIntent: null,
-  troveLinkDialogUrls: []
+  troveLinkDialogUrls: [],
+  queueTrayOpen: false
 };
 
 const elements = {
@@ -91,10 +93,22 @@ const elements = {
   captureIgnore: document.getElementById("capture-ignore"),
   captureCollect: document.getElementById("capture-collect"),
   captureCopyMarkdown: document.getElementById("capture-copy-markdown"),
+  captureFindBar: document.getElementById("capture-find-bar"),
+  captureFindInput: document.getElementById("capture-find-input"),
+  captureFindCount: document.getElementById("capture-find-count"),
+  captureFindPrev: document.getElementById("capture-find-prev"),
+  captureFindNext: document.getElementById("capture-find-next"),
+  captureFindClose: document.getElementById("capture-find-close"),
   captureProgress: document.getElementById("capture-progress"),
   captureImageSection: document.getElementById("capture-image-section"),
   captureImageGallery: document.getElementById("capture-image-gallery"),
   captureMarkdown: document.getElementById("capture-markdown"),
+  queueTray: document.getElementById("queue-tray"),
+  queueTrayToggle: document.getElementById("queue-tray-toggle"),
+  queueTrayCount: document.getElementById("queue-tray-count"),
+  queueTrayCurrent: document.getElementById("queue-tray-current"),
+  queueTrayMeta: document.getElementById("queue-tray-meta"),
+  queueTrayPanel: document.getElementById("queue-tray-panel"),
   imageLightbox: document.getElementById("image-lightbox"),
   imageLightboxBackdrop: document.getElementById("image-lightbox-backdrop"),
   imageLightboxClose: document.getElementById("image-lightbox-close"),
@@ -135,10 +149,18 @@ const previewState = {
   pageUrl: "",
   imageIndex: 0,
   statusOverride: "",
-  statusOverrideProjectPath: ""
+  statusOverrideProjectPath: "",
+  findOpen: false,
+  findQuery: "",
+  findMatches: [],
+  findActiveIndex: -1
 };
 
-const backgroundFetchCache = new Map();
+const backgroundFetchPendingCache = new Map();
+const backgroundFetchResultCache = new Map();
+const previewMarkdownCache = new Map();
+const BACKGROUND_FETCH_MAX_ENTRIES = 400;
+const PREVIEW_MARKDOWN_MAX_ENTRIES = 400;
 let webviewResizeObserver = null;
 
 function escapeHtml(value) {
@@ -468,6 +490,10 @@ function getActiveTab() {
   return state.tabs.find((tab) => tab.id === state.activeTabId) || null;
 }
 
+function getTabById(tabId = "") {
+  return state.tabs.find((tab) => tab.id === tabId) || null;
+}
+
 function getDefaultBrowseUrl() {
   return state.plugins[0]?.browseUrl || "https://trove.nla.gov.au/";
 }
@@ -488,6 +514,23 @@ function ensureUrl(value) {
     return `https://${trimmed}`;
   }
   return getDefaultSearchUrl(trimmed);
+}
+
+function setSessionCacheEntry(cache, key, value, maxEntries) {
+  if (!cache || !key) {
+    return;
+  }
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey === "undefined") {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
 }
 
 function formatDate(value) {
@@ -623,14 +666,89 @@ function formatSaveProgressLabel(progress) {
     return "";
   }
   const current = Math.max(0, Number(progress.current) || 0);
+  const completed = Math.max(0, Number(progress.completed) || 0);
   const total = Math.max(0, Number(progress.total) || 0);
   if (progress.phase === "complete" || progress.phase === "saved") {
-    return `Collected ${current}/${total} images`;
+    return `Collected ${Math.min(completed || current, total)}/${total} images`;
   }
   if (progress.phase === "skipped") {
-    return `Skipping broken image ${current}/${total}`;
+    return `Skipping broken image ${Math.min(current, total)} · ${Math.min(completed, total)}/${total}`;
   }
   return `Collecting image ${Math.min(current, total)}/${total}`;
+}
+
+function summarizeQueueTarget(job) {
+  const title = String(job?.item?.title || "").trim();
+  if (title) {
+    return title;
+  }
+  const rawUrl = ensureUrl(job?.url || job?.item?.url || "");
+  if (!rawUrl) {
+    return "item";
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.pathname.replace(/\/+$/, "").split("/").filter(Boolean).pop() || parsed.hostname;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function renderQueueTray() {
+  const hasActiveQueueWork = Boolean(state.currentQueueJob) || Boolean(state.saveProgress);
+  const waitingCount = state.actionQueue.length;
+  const shouldShow = state.mode === "collect" && (hasActiveQueueWork || waitingCount > 0);
+  if (!elements.queueTray) {
+    return;
+  }
+  elements.queueTray.hidden = !shouldShow;
+  if (!shouldShow) {
+    state.queueTrayOpen = false;
+    elements.queueTrayToggle?.setAttribute("aria-expanded", "false");
+    if (elements.queueTrayPanel) {
+      elements.queueTrayPanel.hidden = true;
+    }
+    if (elements.queueTrayCount) {
+      elements.queueTrayCount.textContent = "";
+    }
+    elements.queueTrayCurrent.textContent = "";
+    elements.queueTrayMeta.textContent = "";
+    return;
+  }
+
+  const job = state.currentQueueJob;
+  const verb = describeBusyAction(job?.action || state.captureBusy?.action || "collect");
+  const targetLabel = summarizeQueueTarget(job);
+  const progressLabel = state.saveProgress ? formatSaveProgressLabel(state.saveProgress) : "";
+  const queueCount = (job ? 1 : 0) + waitingCount;
+
+  if (elements.queueTrayCount) {
+    elements.queueTrayCount.textContent = String(queueCount);
+  }
+  if (elements.queueTrayToggle) {
+    elements.queueTrayToggle.setAttribute("aria-expanded", state.queueTrayOpen ? "true" : "false");
+  }
+  if (elements.queueTrayPanel) {
+    elements.queueTrayPanel.hidden = !state.queueTrayOpen;
+  }
+
+  elements.queueTrayCurrent.textContent = job ? `${verb} ${targetLabel}` : "Working through queue";
+  const metaParts = [];
+  if (progressLabel) {
+    metaParts.push(progressLabel);
+  }
+  if (waitingCount > 0) {
+    metaParts.push(`${waitingCount} waiting`);
+  }
+  if (!metaParts.length && job?.source) {
+    metaParts.push(job.source === "inline" ? "Queued from page" : "Queued from preview");
+  }
+  elements.queueTrayMeta.textContent = metaParts.join(" · ");
+}
+
+function setQueueTrayOpen(nextOpen) {
+  state.queueTrayOpen = Boolean(nextOpen);
+  renderQueueTray();
 }
 
 function setButtonLoading(button, isLoading, label) {
@@ -672,6 +790,63 @@ function cloneItemSnapshot(item) {
       aliases: Array.isArray(item.aliases) ? [...item.aliases] : []
     };
   }
+}
+
+function getBackgroundFetchCacheKey(url, mode = "full") {
+  return `${ensureUrl(url)}::${mode}`;
+}
+
+function getCachedFetchedItem(url, mode = "full") {
+  const cacheKey = getBackgroundFetchCacheKey(url, mode);
+  const cached = backgroundFetchResultCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  setSessionCacheEntry(backgroundFetchResultCache, cacheKey, cached, BACKGROUND_FETCH_MAX_ENTRIES);
+  return cloneItemSnapshot(cached.item);
+}
+
+function cacheFetchedItem(url, mode, item) {
+  if (!item) {
+    return;
+  }
+  const cacheKey = getBackgroundFetchCacheKey(url, mode);
+  setSessionCacheEntry(
+    backgroundFetchResultCache,
+    cacheKey,
+    {
+      item: cloneItemSnapshot(item)
+    },
+    BACKGROUND_FETCH_MAX_ENTRIES
+  );
+}
+
+function getPreviewMarkdownCacheKey(item) {
+  if (!item) {
+    return "";
+  }
+  if (item.key) {
+    return `key:${item.key}`;
+  }
+  const normalizedUrl = normalizeComparableUrl(item.url || item.canonicalUrl || "");
+  if (normalizedUrl) {
+    return `url:${normalizedUrl}`;
+  }
+  return `${item.source || "unknown"}:${item.type || "item"}:${item.id || item.title || ""}`;
+}
+
+async function buildPreviewMarkdownCached(item, options = {}) {
+  const cacheKey = getPreviewMarkdownCacheKey(item);
+  if (!options.force && cacheKey && previewMarkdownCache.has(cacheKey)) {
+    const cached = previewMarkdownCache.get(cacheKey);
+    setSessionCacheEntry(previewMarkdownCache, cacheKey, cached, PREVIEW_MARKDOWN_MAX_ENTRIES);
+    return cached;
+  }
+  const markdown = await window.troveApi.previewMarkdown(item);
+  if (cacheKey) {
+    setSessionCacheEntry(previewMarkdownCache, cacheKey, markdown, PREVIEW_MARKDOWN_MAX_ENTRIES);
+  }
+  return markdown;
 }
 
 function setCaptureBusy(action, active, item = getDisplayedItem(), progressLabel = "", token = "") {
@@ -776,14 +951,7 @@ function pruneQueuedActionsForTarget(projectPath, target, incomingAction) {
 }
 
 function shouldReflectQueuedActionInCapture(target, options = {}) {
-  if (options.source === "sidebar") {
-    return true;
-  }
-  const displayedItem = getDisplayedItem();
-  if (!displayedItem || !target) {
-    return false;
-  }
-  return itemsReferToSameRecord(displayedItem, target);
+  return options.source === "sidebar";
 }
 
 function beginPreviewIntent(origin = "link", context = getCaptureContext(), token = "") {
@@ -844,12 +1012,13 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   };
   state.queuedActionIds.add(actionKey);
   state.actionQueue.push(job);
+  renderQueueTray();
 
   const busyLabel = `${describeBusyAction(action)}…`;
   if (shouldReflectQueuedActionInCapture(target, options)) {
     setCaptureBusy(action, true, target, busyLabel, job.id);
   }
-  void applyImmediatePageLoading(target, action, true, busyLabel);
+  void applyImmediatePageLoading(target, action, true, busyLabel, job.context);
   void processActionQueue();
   return true;
 }
@@ -886,7 +1055,10 @@ async function resolveQueuedActionItem(job) {
   if (item.supported || item.key || (item.title && item.url)) {
     return item;
   }
-  const fetched = await fetchItemByUrl(job.url || item.url, { force: true, mode: "preview" });
+  let fetched = await fetchItemByUrl(job.url || item.url, { mode: "preview" });
+  if (!fetched?.supported) {
+    fetched = await fetchItemByUrl(job.url || item.url, { force: true, mode: "preview" });
+  }
   if (!fetched?.supported) {
     throw new Error(fetched?.reason || "Could not load the queued item.");
   }
@@ -907,6 +1079,8 @@ async function processActionQueue() {
       if (!job) {
         continue;
       }
+      state.currentQueueJob = job;
+      renderQueueTray();
       try {
         const item = await resolveQueuedActionItem(job);
         if (job.action === "collect") {
@@ -920,14 +1094,17 @@ async function processActionQueue() {
         }
       } catch (error) {
         setCaptureBusy("", false, null, "", job.id);
-        void applyImmediatePageLoading(job.item, job.action, false);
+        void applyImmediatePageLoading(job.item, job.action, false, "", job.context);
         setMessage(error.message || `${describeBusyAction(job.action)} failed.`);
       } finally {
         state.queuedActionIds.delete(job.actionKey);
+        state.currentQueueJob = null;
+        renderQueueTray();
       }
     }
   } finally {
     state.actionQueueRunning = false;
+    renderQueueTray();
   }
 }
 
@@ -958,6 +1135,20 @@ function clearPreviewState() {
   previewState.imageIndex = 0;
   previewState.statusOverride = "";
   previewState.statusOverrideProjectPath = "";
+  previewState.findMatches = [];
+  previewState.findActiveIndex = -1;
+}
+
+function hasStickyPreview() {
+  return Boolean(previewState.item && String(previewState.markdown || "").trim());
+}
+
+function showStickyPreview() {
+  if (!hasStickyPreview()) {
+    return false;
+  }
+  renderCapturePane(previewState.item, previewState.markdown, { origin: previewState.origin });
+  return true;
 }
 
 function itemsReferToSameRecord(left, right) {
@@ -1012,6 +1203,163 @@ function getDisplayedItem() {
 
 function getDisplayedMarkdown() {
   return previewState.markdown || "";
+}
+
+function isTextEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  return Boolean(target.closest("input, textarea, select"));
+}
+
+function isFocusWithinCapturePane() {
+  const activeElement = document.activeElement;
+  return Boolean(activeElement instanceof Element && activeElement.closest("#capture-panel"));
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function updateCaptureFindUi() {
+  const matches = previewState.findMatches || [];
+  const activeIndex = previewState.findActiveIndex;
+  const countText = matches.length ? `${activeIndex + 1}/${matches.length}` : "0/0";
+  elements.captureFindBar.hidden = !previewState.findOpen;
+  elements.captureMarkdown.parentElement?.classList.toggle("has-find-open", previewState.findOpen);
+  elements.captureFindCount.textContent = countText;
+  elements.captureFindPrev.disabled = matches.length < 2;
+  elements.captureFindNext.disabled = matches.length < 2;
+}
+
+function clearCaptureFindHighlights() {
+  previewState.findMatches = [];
+  previewState.findActiveIndex = -1;
+  if (elements.captureMarkdown) {
+    elements.captureMarkdown.innerHTML = renderMarkdownHtml(getDisplayedMarkdown());
+  }
+  updateCaptureFindUi();
+}
+
+function activateCaptureFindMatch(index, options = {}) {
+  const matches = previewState.findMatches || [];
+  if (!matches.length) {
+    previewState.findActiveIndex = -1;
+    updateCaptureFindUi();
+    return;
+  }
+  const nextIndex = ((index % matches.length) + matches.length) % matches.length;
+  previewState.findActiveIndex = nextIndex;
+  matches.forEach((node, nodeIndex) => {
+    node.classList.toggle("is-active", nodeIndex === nextIndex);
+  });
+  const activeNode = matches[nextIndex];
+  if (activeNode && options.scroll !== false) {
+    activeNode.scrollIntoView({ block: "center", behavior: options.behavior || "smooth" });
+  }
+  updateCaptureFindUi();
+}
+
+function applyCaptureFindHighlights() {
+  const query = String(previewState.findQuery || "").trim();
+  clearCaptureFindHighlights();
+  if (!query || !elements.captureMarkdown) {
+    return;
+  }
+  const root = elements.captureMarkdown;
+  const matcher = new RegExp(escapeRegExp(query), "gi");
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      if (node.parentElement?.closest("mark.capture-find-match")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const textNodes = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode);
+  }
+  const matches = [];
+  for (const node of textNodes) {
+    const text = node.nodeValue || "";
+    matcher.lastIndex = 0;
+    let hasMatch = false;
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    let result = matcher.exec(text);
+    while (result) {
+      hasMatch = true;
+      const matchText = result[0];
+      const index = result.index;
+      if (index > cursor) {
+        fragment.append(document.createTextNode(text.slice(cursor, index)));
+      }
+      const mark = document.createElement("mark");
+      mark.className = "capture-find-match";
+      mark.textContent = matchText;
+      fragment.append(mark);
+      matches.push(mark);
+      cursor = index + matchText.length;
+      result = matcher.exec(text);
+    }
+    if (!hasMatch) {
+      continue;
+    }
+    if (cursor < text.length) {
+      fragment.append(document.createTextNode(text.slice(cursor)));
+    }
+    node.parentNode?.replaceChild(fragment, node);
+  }
+  previewState.findMatches = matches;
+  if (matches.length) {
+    activateCaptureFindMatch(0, { scroll: false });
+  } else {
+    previewState.findActiveIndex = -1;
+    updateCaptureFindUi();
+  }
+}
+
+function openCaptureFind(prefill = "") {
+  previewState.findOpen = true;
+  if (prefill && !previewState.findQuery) {
+    previewState.findQuery = prefill;
+  }
+  elements.captureFindInput.value = previewState.findQuery;
+  updateCaptureFindUi();
+  applyCaptureFindHighlights();
+  queueMicrotask(() => {
+    elements.captureFindInput.focus();
+    elements.captureFindInput.select();
+  });
+}
+
+function closeCaptureFind() {
+  previewState.findOpen = false;
+  previewState.findQuery = "";
+  elements.captureFindInput.value = "";
+  clearCaptureFindHighlights();
+  updateCaptureFindUi();
+}
+
+function handleCaptureFindInput() {
+  previewState.findQuery = elements.captureFindInput.value || "";
+  applyCaptureFindHighlights();
+}
+
+function renderCaptureMarkdown(markdown) {
+  elements.captureMarkdown.innerHTML = renderMarkdownHtml(markdown);
+  if (previewState.findOpen) {
+    applyCaptureFindHighlights();
+  } else {
+    updateCaptureFindUi();
+  }
 }
 
 function hasMeaningfulItemTitle(item) {
@@ -1081,6 +1429,9 @@ function hasCurrentPagePreviewForTab(tab = getActiveTab()) {
 }
 
 function resetCapturePane(message, kind = "Preview") {
+  if (showStickyPreview()) {
+    return;
+  }
   closeImageLightbox();
   elements.captureEmpty.textContent = message;
   elements.captureEmpty.classList.toggle("is-loading", kind === "Loading");
@@ -1092,7 +1443,7 @@ function resetCapturePane(message, kind = "Preview") {
   elements.captureOpenPage.disabled = true;
   elements.captureImageSection.hidden = true;
   elements.captureImageGallery.innerHTML = "";
-  elements.captureMarkdown.textContent = "";
+  renderCaptureMarkdown("");
   elements.captureProgress.hidden = true;
   elements.captureProgress.textContent = "";
   elements.captureCopyMarkdown.disabled = true;
@@ -1174,15 +1525,19 @@ function renderCapturePane(item, markdown, options = {}) {
   } else {
     elements.captureImageGallery.innerHTML = "";
   }
-  elements.captureMarkdown.innerHTML = renderMarkdownHtml(markdown);
+  renderCaptureMarkdown(markdown);
   elements.captureCopyMarkdown.disabled = !String(markdown || "").trim();
   elements.captureEmpty.classList.remove("is-loading");
   elements.captureEmpty.hidden = true;
   elements.captureBody.hidden = false;
 }
 
-async function applyImmediatePageFeedback(item, status) {
-  const activeTab = getActiveTab();
+function resolveActionContextTab(context = null) {
+  return getTabById(context?.tabId || "") || getActiveTab();
+}
+
+async function applyImmediatePageFeedback(item, status, context = null) {
+  const targetTab = resolveActionContextTab(context);
   if (!item) {
     return;
   }
@@ -1191,11 +1546,11 @@ async function applyImmediatePageFeedback(item, status) {
     return;
   }
   const script = sourceRegistry.buildImmediateStatusScript({ status, urls });
-  await safeExecuteJavaScript(activeTab, script, true, null);
+  await safeExecuteJavaScript(targetTab, script, true, null, { requireReady: false });
 }
 
-async function applyImmediatePageLoading(item, action, active, label = "") {
-  const activeTab = getActiveTab();
+async function applyImmediatePageLoading(item, action, active, label = "", context = null) {
+  const targetTab = resolveActionContextTab(context);
   if (!item) {
     return;
   }
@@ -1204,11 +1559,12 @@ async function applyImmediatePageLoading(item, action, active, label = "") {
     return;
   }
   const script = sourceRegistry.buildImmediateLoadingScript({ action, active, label, urls });
-  await safeExecuteJavaScript(activeTab, script, true, null);
+  await safeExecuteJavaScript(targetTab, script, true, null, { requireReady: false });
 }
 
 async function handleSaveProgress(progress) {
   state.saveProgress = progress || null;
+  renderQueueTray();
   const displayedItem = getDisplayedItem();
   if (displayedItem) {
     renderCapturePane(displayedItem, getDisplayedMarkdown(), { origin: previewState.origin });
@@ -1218,7 +1574,13 @@ async function handleSaveProgress(progress) {
       url: progress.url || "",
       aliases: Array.isArray(progress.aliases) ? progress.aliases : []
     };
-    await applyImmediatePageLoading(progressItem, "collect", progress?.phase !== "complete", formatSaveProgressLabel(progress));
+    await applyImmediatePageLoading(
+      progressItem,
+      "collect",
+      progress?.phase !== "complete",
+      formatSaveProgressLabel(progress),
+      state.currentQueueJob?.context || null
+    );
   }
 }
 
@@ -1322,7 +1684,7 @@ async function loadManageItemMarkdown(project, item) {
       // Fall back to synthesized markdown when the sidecar is missing.
     }
   }
-  return window.troveApi.previewMarkdown(item);
+  return buildPreviewMarkdownCached(item);
 }
 
 function getManageItemImageSource(item) {
@@ -1540,6 +1902,7 @@ function renderMode() {
   elements.collectView.hidden = state.mode !== "collect";
   elements.manageView.hidden = state.mode !== "manage";
   elements.pluginsView.hidden = state.mode !== "plugins";
+  renderQueueTray();
 }
 
 function setMode(mode) {
@@ -1574,17 +1937,18 @@ function isWebviewReady(tab) {
   return Boolean(tab && tab.didDomReady && tab.webview?.isConnected);
 }
 
-async function safeExecuteJavaScript(target, script, userGesture = true, fallbackValue = null) {
+async function safeExecuteJavaScript(target, script, userGesture = true, fallbackValue = null, options = {}) {
   if (!target) {
     return fallbackValue;
   }
   try {
     const isTab = Object.prototype.hasOwnProperty.call(target, "webview");
     const webview = isTab ? target.webview : target;
+    const requireReady = options.requireReady !== false;
     if (!webview?.isConnected) {
       return fallbackValue;
     }
-    if (isTab && !isWebviewReady(target)) {
+    if (isTab && requireReady && !isWebviewReady(target)) {
       return fallbackValue;
     }
     const execution = webview.executeJavaScript(script, userGesture);
@@ -1774,9 +2138,6 @@ function closeTab(tabId) {
   if (tab.refreshTimer) {
     clearTimeout(tab.refreshTimer);
   }
-  if (previewState.tabId === tab.id) {
-    clearPreviewState();
-  }
   tab.webview.remove();
 
   if (state.activeTabId === tabId) {
@@ -1793,7 +2154,6 @@ function setActiveTab(tabId) {
     tab.webview.classList.toggle("is-active", tab.id === tabId);
   }
   syncWebviewElementSize(getActiveTab());
-  clearPreviewState();
   const activeTab = getActiveTab();
   elements.addressInput.value = activeTab ? activeTab.url : "";
   renderTabs();
@@ -2018,13 +2378,12 @@ function bindWebview(tab) {
     if (state.previewIntent?.tabId === tab.id) {
       clearPreviewIntent(state.previewIntent.token || "");
     }
-    if (previewState.tabId === tab.id) {
-      clearPreviewState();
-    }
     if (tab.id === state.activeTabId) {
       elements.pageStatus.textContent = "Loading";
       elements.pageKind.textContent = "Waiting for a supported collection page";
-      resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
+      if (!showStickyPreview()) {
+        resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
+      }
     }
   });
 
@@ -2037,9 +2396,6 @@ function bindWebview(tab) {
       if (state.previewIntent?.tabId === tab.id) {
         clearPreviewIntent(state.previewIntent.token || "");
       }
-    }
-    if (previewState.tabId === tab.id && previewState.pageUrl !== tab.url) {
-      clearPreviewState();
     }
     if (tab.id === state.activeTabId) {
       elements.addressInput.value = tab.url;
@@ -2598,19 +2954,30 @@ async function extractCurrentItem() {
 
 async function fetchItemByUrl(url, options = {}) {
   const mode = options.mode || "full";
-  const cacheKey = `${ensureUrl(url)}::${mode}`;
-  if (!options.force && backgroundFetchCache.has(cacheKey)) {
-    return backgroundFetchCache.get(cacheKey);
+  const normalizedUrl = ensureUrl(url);
+  const cacheKey = getBackgroundFetchCacheKey(normalizedUrl, mode);
+  if (!options.force) {
+    const cached = getCachedFetchedItem(normalizedUrl, mode);
+    if (cached) {
+      return cached;
+    }
+  }
+  if (!options.force && backgroundFetchPendingCache.has(cacheKey)) {
+    return backgroundFetchPendingCache.get(cacheKey);
   }
 
-  const pending = window.troveApi.fetchItemByUrl(ensureUrl(url), options);
-  backgroundFetchCache.set(cacheKey, pending);
+  const pending = window.troveApi.fetchItemByUrl(normalizedUrl, options);
+  backgroundFetchPendingCache.set(cacheKey, pending);
 
   try {
-    return await pending;
+    const item = await pending;
+    if (item?.supported) {
+      cacheFetchedItem(normalizedUrl, mode, item);
+    }
+    return item;
   } finally {
-    if (backgroundFetchCache.get(cacheKey) === pending) {
-      backgroundFetchCache.delete(cacheKey);
+    if (backgroundFetchPendingCache.get(cacheKey) === pending) {
+      backgroundFetchPendingCache.delete(cacheKey);
     }
   }
 }
@@ -2663,7 +3030,6 @@ async function maybeBridgeCurrentPageItem(item, activeTab) {
 
   try {
     const bridgedFromBackground = await fetchItemByUrl(item.url || activeTab?.url || "", {
-      force: true,
       mode: "preview"
     });
     if (bridgedFromBackground?.supported && bridgedFromBackground.source === "slwa") {
@@ -2685,7 +3051,10 @@ async function maybeBridgeCurrentPageItem(item, activeTab) {
     return item;
   }
 
-  const bridged = await fetchItemByUrl(bridgeUrl, { force: true, mode: "preview" });
+  let bridged = await fetchItemByUrl(bridgeUrl, { mode: "preview" });
+  if (!bridged?.supported) {
+    bridged = await fetchItemByUrl(bridgeUrl, { force: true, mode: "preview" });
+  }
   if (!bridged?.supported) {
     return item;
   }
@@ -2711,7 +3080,10 @@ async function maybeHydrateSlwaCurrentPageItem(item) {
   if (!needsHydration) {
     return item;
   }
-  const hydrated = await fetchItemByUrl(item.viewAllUrl || item.url, { force: true, mode: "preview" });
+  let hydrated = await fetchItemByUrl(item.viewAllUrl || item.url, { mode: "preview" });
+  if (!hydrated?.supported) {
+    hydrated = await fetchItemByUrl(item.viewAllUrl || item.url, { force: true, mode: "preview" });
+  }
   if (!hydrated?.supported) {
     return item;
   }
@@ -2720,12 +3092,13 @@ async function maybeHydrateSlwaCurrentPageItem(item) {
 }
 
 async function showCaptureItem(item, origin = "page", context = getCaptureContext(), requestId = 0) {
-  const markdown = await window.troveApi.previewMarkdown(item);
+  const markdown = await buildPreviewMarkdownCached(item);
   if (requestId && requestId !== state.captureRequestId) {
     return false;
   }
   setPreviewState(item, markdown, origin, context);
   renderCapturePane(item, markdown, { origin });
+  void warmCollectableItem(item);
   return true;
 }
 
@@ -2736,10 +3109,10 @@ async function previewItemFromUrl(url) {
   const previewToken = `preview-${requestId}`;
   state.previewActionId = previewToken;
   beginPreviewIntent("link", context, previewToken);
-  void applyImmediatePageLoading(placeholder, "preview", true);
+  void applyImmediatePageLoading(placeholder, "preview", true, "", context);
   setCaptureBusy("preview", true, placeholder, "Previewing…", previewToken);
   setMessage("Loading linked item preview…");
-  if (!getDisplayedItem()) {
+  if (!hasStickyPreview()) {
     resetCapturePane("Loading the linked record into the capture pane.", "Loading");
   }
   try {
@@ -2748,8 +3121,10 @@ async function previewItemFromUrl(url) {
       return;
     }
     if (!item?.supported) {
-      clearPreviewState();
-      resetCapturePane(item?.reason || "Could not build a preview for that link.");
+      if (!showStickyPreview()) {
+        clearPreviewState();
+        resetCapturePane(item?.reason || "Could not build a preview for that link.");
+      }
       setMessage(item?.reason || "Could not build a preview for that link.");
       return;
     }
@@ -2769,7 +3144,7 @@ async function previewItemFromUrl(url) {
     }
     clearPreviewIntent(previewToken);
     setCaptureBusy("", false, null, "", previewToken);
-    void applyImmediatePageLoading(placeholder, "preview", false);
+    void applyImmediatePageLoading(placeholder, "preview", false, "", context);
   }
 }
 
@@ -2789,7 +3164,7 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
         forcedStatus: "saved"
       });
     }
-    await applyImmediatePageFeedback(savableItem, "saved");
+    await applyImmediatePageFeedback(savableItem, "saved", context);
     if (isCaptureContextCurrent(context)) {
       setMessage(`Collected ${savableItem.title}.`);
     }
@@ -2804,8 +3179,9 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
     }
   } finally {
     state.saveProgress = null;
+    renderQueueTray();
     setCaptureBusy("", false, null, "", busyToken);
-    await applyImmediatePageLoading(item, "collect", false);
+    await applyImmediatePageLoading(item, "collect", false, "", context);
     if (isCaptureContextCurrent(context) && getDisplayedItem()) {
       renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
     }
@@ -2832,7 +3208,7 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
         forcedStatus: ""
       });
     }
-    await applyImmediatePageFeedback(item, "");
+    await applyImmediatePageFeedback(item, "", options.context);
     if (isCaptureContextCurrent(options.context)) {
       setMessage(`Removed ${item.title} from the library.`);
     }
@@ -2847,7 +3223,7 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
     }
   } finally {
     setCaptureBusy("", false, null, "", options.busyToken || "");
-    await applyImmediatePageLoading(item, "uncollect", false);
+    await applyImmediatePageLoading(item, "uncollect", false, "", options.context);
   }
 }
 
@@ -2865,7 +3241,7 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
         forcedStatus: ""
       });
     }
-    await applyImmediatePageFeedback(item, "");
+    await applyImmediatePageFeedback(item, "", context);
     if (isCaptureContextCurrent(context)) {
       setMessage(`Unignored ${item.title}.`);
     }
@@ -2880,7 +3256,7 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
     }
   } finally {
     setCaptureBusy("", false, null, "", busyToken);
-    await applyImmediatePageLoading(item, "unignore", false);
+    await applyImmediatePageLoading(item, "unignore", false, "", context);
   }
 }
 
@@ -2898,7 +3274,7 @@ async function ignoreItemInProject(item, projectPath = getActiveProject()?.path,
         forcedStatus: "ignored"
       });
     }
-    await applyImmediatePageFeedback(item, "ignored");
+    await applyImmediatePageFeedback(item, "ignored", context);
     if (isCaptureContextCurrent(context)) {
       setMessage(`Ignored ${item.title}.`);
     }
@@ -2913,7 +3289,7 @@ async function ignoreItemInProject(item, projectPath = getActiveProject()?.path,
     }
   } finally {
     setCaptureBusy("", false, null, "", busyToken);
-    await applyImmediatePageLoading(item, "ignore", false);
+    await applyImmediatePageLoading(item, "ignore", false, "", context);
   }
 }
 
@@ -2929,8 +3305,40 @@ async function ensureCollectableItem(item) {
   if (!needsFullFetch) {
     return item;
   }
-  const fullItem = await fetchItemByUrl(item.viewAllUrl || item.url, { force: true, mode: "full" });
-  return fullItem?.supported ? fullItem : item;
+  const targetUrl = item.viewAllUrl || item.url;
+  const fullItem = await fetchItemByUrl(targetUrl, { mode: "full" });
+  if (fullItem?.supported) {
+    return fullItem;
+  }
+  const forcedFullItem = await fetchItemByUrl(targetUrl, { force: true, mode: "full" });
+  return forcedFullItem?.supported ? forcedFullItem : item;
+}
+
+function needsCollectWarmup(item) {
+  if (!item?.supported || item.source !== "slwa" || item.type !== "image") {
+    return false;
+  }
+  const attachments = getItemAttachments(item);
+  return (
+    attachments.length > 1 ||
+    Boolean(item.viewAllUrl) ||
+    attachments.some((entry) => !hasFullResolutionImage(entry))
+  );
+}
+
+async function warmCollectableItem(item) {
+  if (!needsCollectWarmup(item)) {
+    return;
+  }
+  const targetUrl = item.viewAllUrl || item.url;
+  if (!targetUrl) {
+    return;
+  }
+  try {
+    await fetchItemByUrl(targetUrl, { mode: "full" });
+  } catch {
+    // Best-effort warmup only. Collection still does its own checked fetch.
+  }
 }
 
 async function hydratePreviewAttachmentAtIndex(index) {
@@ -2981,7 +3389,8 @@ async function collectItemFromUrl(url) {
       return;
     }
   }
-  const queued = queueProjectAction(action, project.path, normalizedUrl, { source: "inline" });
+  const cachedItem = action === "collect" ? getCachedFetchedItem(normalizedUrl, "preview") : null;
+  const queued = queueProjectAction(action, project.path, cachedItem || normalizedUrl, { source: "inline" });
   if (queued) {
     setMessage(`${describeBusyAction(action)} queued.`);
   }
@@ -3098,7 +3507,7 @@ async function saveDebugCapture(kind) {
     capture.title = item.title;
     capture.itemJson = item;
     if (kind === "preview") {
-      capture.previewMarkdown = getDisplayedMarkdown() || (await window.troveApi.previewMarkdown(item));
+      capture.previewMarkdown = getDisplayedMarkdown() || (await buildPreviewMarkdownCached(item));
     }
   }
 
@@ -3129,11 +3538,12 @@ async function updateCaptureState() {
   elements.captureOpenPage.disabled = !getDisplayedItem()?.url;
 
   if (!activeTab) {
-    clearPreviewState();
     elements.pageStatus.textContent = "Ready";
     elements.pageKind.className = "page-kind";
     elements.pageKind.textContent = "Open a supported collection page.";
-    resetCapturePane("Open a page to start browsing. Supported record pages will render their capture preview here.");
+    if (!showStickyPreview()) {
+      resetCapturePane("Open a page to start browsing. Supported record pages will render their capture preview here.");
+    }
     return;
   }
 
@@ -3146,7 +3556,7 @@ async function updateCaptureState() {
 
   const requestId = ++state.captureRequestId;
 
-  if (!hasInlinePreviewForActiveTab() && !hasCurrentPagePreviewForTab(activeTab)) {
+  if (!hasInlinePreviewForActiveTab() && !hasCurrentPagePreviewForTab(activeTab) && !hasStickyPreview()) {
     resetCapturePane("Reading the current page and preparing its capture preview.", "Loading");
   }
 
@@ -3191,12 +3601,14 @@ async function updateCaptureState() {
     if (hasInlinePreviewForActiveTab() && previewState.item) {
       renderCapturePane(previewState.item, previewState.markdown, { origin: previewState.origin });
     } else {
-      clearPreviewState();
-      resetCapturePane(
-        knownCollectionHost
-          ? "This page is a search or list view, not the final record. Use the inline Preview or Collect buttons on supported result links."
-          : item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record."
-      );
+      if (!showStickyPreview()) {
+        clearPreviewState();
+        resetCapturePane(
+          knownCollectionHost
+            ? "This page is a search or list view, not the final record. Use the inline Preview or Collect buttons on supported result links."
+            : item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record."
+        );
+      }
     }
     if (!project) {
       setMessage("Create or select a project first.");
@@ -3260,6 +3672,13 @@ document.addEventListener("click", (event) => {
     !event.target.closest(".project-card")
   ) {
     closeProjectContextMenu();
+  }
+  if (
+    state.queueTrayOpen &&
+    event.target instanceof Element &&
+    !event.target.closest("#queue-tray")
+  ) {
+    setQueueTrayOpen(false);
   }
   const lightboxTrigger =
     event.target instanceof Element ? event.target.closest("[data-open-image-lightbox]") : null;
@@ -3516,12 +3935,13 @@ elements.addressForm.addEventListener("submit", (event) => {
   const nextUrl = ensureUrl(elements.addressInput.value);
   activeTab.url = nextUrl;
   invalidateTabCaches(activeTab);
-  clearPreviewState();
   elements.pageStatus.textContent = "Loading";
   elements.pageKind.className = "page-kind";
   elements.pageKind.textContent = "Waiting for a supported collection page";
   setMessage("Loading page…");
-  resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
+  if (!showStickyPreview()) {
+    resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
+  }
   activeTab.webview.loadURL(nextUrl);
   scheduleTabRefresh(activeTab, { delay: 1500 });
 });
@@ -3539,6 +3959,13 @@ elements.savedSearchesButton?.addEventListener("click", (event) => {
   }
   state.savedSearchMenuOpen = !state.savedSearchMenuOpen;
   renderSavedSearchMenu();
+});
+elements.queueTrayToggle?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (elements.queueTray.hidden) {
+    return;
+  }
+  setQueueTrayOpen(!state.queueTrayOpen);
 });
 elements.newTabButton.addEventListener("click", () => createTab());
 elements.debugToggle.addEventListener("click", () => toggleDebugDrawer());
@@ -3571,6 +3998,34 @@ elements.captureCopyMarkdown.addEventListener("click", async () => {
   }
   await window.troveApi.copyText(markdown);
   setMessage("Copied markdown preview.");
+});
+
+elements.captureFindInput.addEventListener("input", () => {
+  handleCaptureFindInput();
+});
+elements.captureFindInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    activateCaptureFindMatch(
+      previewState.findActiveIndex + (event.shiftKey ? -1 : 1),
+      { behavior: "smooth" }
+    );
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCaptureFind();
+    elements.captureMarkdown.focus?.();
+  }
+});
+elements.captureFindPrev.addEventListener("click", () => {
+  activateCaptureFindMatch(previewState.findActiveIndex - 1, { behavior: "smooth" });
+});
+elements.captureFindNext.addEventListener("click", () => {
+  activateCaptureFindMatch(previewState.findActiveIndex + 1, { behavior: "smooth" });
+});
+elements.captureFindClose.addEventListener("click", () => {
+  closeCaptureFind();
 });
 
 elements.captureCollect.addEventListener("click", async () => {
@@ -3624,6 +4079,15 @@ elements.captureIgnore.addEventListener("click", async () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+    if (isFocusWithinCapturePane() && !isTextEditableTarget(event.target)) {
+      event.preventDefault();
+      const selection = window.getSelection?.();
+      const selectedText = selection ? String(selection).trim() : "";
+      openCaptureFind(selectedText);
+      return;
+    }
+  }
   if ((event.key === "Enter" || event.key === " ") && event.target instanceof Element) {
     const button = event.target.closest("button");
     if (button) {
@@ -3631,6 +4095,10 @@ window.addEventListener("keydown", (event) => {
     }
   }
   if (event.key !== "Escape") {
+    return;
+  }
+  if (previewState.findOpen) {
+    closeCaptureFind();
     return;
   }
   if (state.savedSearchMenuOpen) {
@@ -3647,6 +4115,10 @@ window.addEventListener("keydown", (event) => {
   }
   if (!elements.projectContextMenu.hidden) {
     closeProjectContextMenu();
+    return;
+  }
+  if (state.queueTrayOpen) {
+    setQueueTrayOpen(false);
     return;
   }
   if (!elements.imageLightbox.hidden) {

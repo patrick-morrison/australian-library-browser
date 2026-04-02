@@ -483,6 +483,7 @@ button.is-acknowledged {
 }
 
 .browser-panel {
+  position: relative;
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   min-width: 0;
@@ -1468,6 +1469,88 @@ button.is-acknowledged {
   box-shadow: 14px 0 0 rgba(45, 91, 74, 0.14);
 }
 
+.queue-tray {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 12;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.queue-tray-toggle {
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 93, 65, 0.16);
+  background: rgba(248, 241, 231, 0.92);
+  box-shadow: 0 10px 24px rgba(32, 23, 15, 0.1);
+  backdrop-filter: blur(10px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.queue-tray-toggle:hover {
+  transform: translateY(-1px);
+}
+
+.queue-tray-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 2px solid rgba(45, 91, 74, 0.72);
+  border-right-color: transparent;
+  animation: buttonSpin 0.8s linear infinite;
+}
+
+.queue-tray-count {
+  min-width: 1ch;
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-tray-panel {
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - var(--sidebar-width) - 48px));
+  padding: 10px 12px;
+  border: 1px solid rgba(120, 93, 65, 0.16);
+  border-radius: 14px;
+  background: rgba(248, 241, 231, 0.96);
+  box-shadow: 0 16px 30px rgba(32, 23, 15, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.queue-tray-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.queue-tray-current {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.3;
+}
+
+.queue-tray-meta {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 @keyframes buttonSpin {
   to {
     transform: rotate(360deg);
@@ -1481,6 +1564,49 @@ button.is-acknowledged {
 
 .capture-markdown-wrap {
   position: relative;
+}
+
+.capture-find-bar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 48px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(120, 93, 65, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(32, 23, 15, 0.1);
+}
+
+.capture-find-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+}
+
+.capture-find-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.capture-find-button {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 999px;
+  line-height: 1;
 }
 
 .capture-copy-markdown {
@@ -1592,6 +1718,22 @@ button.is-acknowledged {
   background: rgba(255, 255, 255, 0.72);
   color: var(--ink);
   font: 11.5px/1.45 "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.capture-markdown-wrap.has-find-open .capture-markdown {
+  padding-top: 60px;
+}
+
+.capture-markdown mark.capture-find-match {
+  padding: 0 0.1rem;
+  border-radius: 4px;
+  background: rgba(234, 194, 102, 0.42);
+  color: inherit;
+}
+
+.capture-markdown mark.capture-find-match.is-active {
+  background: rgba(157, 63, 38, 0.24);
+  box-shadow: 0 0 0 1px rgba(157, 63, 38, 0.18);
 }
 
 .capture-markdown > :first-child {

@@ -33,6 +33,7 @@ async function launchApp() {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "",
       TROVE_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
+      TROVE_BROWSER_DISABLE_GPU: "1",
       TROVE_BROWSER_USER_DATA_DIR: userDataDir
     }
   });
@@ -127,13 +128,14 @@ async function webviewEval(page, expression, arg) {
   );
 }
 
-async function clickInlineAction(page, { action, textMatch = "", index = 0 }) {
-  console.log(`[live] inline ${action} ${textMatch || `(index ${index})`}`);
+async function clickInlineAction(page, { action, textMatch = "", urlMatch = "", index = 0 }) {
+  console.log(`[live] inline ${action} ${urlMatch || textMatch || `(index ${index})`}`);
   return webviewEval(
     page,
     `(payload) => {
       const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
       const normalizedNeedle = String(payload.textMatch || "").toLowerCase();
+      const normalizedUrlNeedle = String(payload.urlMatch || "").toLowerCase();
       const resolveContainer = (group) => {
         let pointer = group;
         while (pointer && pointer !== document.body) {
@@ -151,9 +153,11 @@ async function clickInlineAction(page, { action, textMatch = "", index = 0 }) {
           const button = group.querySelector("button." + payload.action);
           const container = resolveContainer(group);
           const text = String(container?.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
-          return { group, button, container, text };
+          const url = String(group.getAttribute("data-trove-library-url") || "").toLowerCase();
+          return { group, button, container, text, url };
         })
         .filter((entry) => entry.button)
+        .filter((entry) => (normalizedUrlNeedle ? entry.url.includes(normalizedUrlNeedle) : true))
         .filter((entry) => (normalizedNeedle ? entry.text.includes(normalizedNeedle) : true));
       const entry = candidates[payload.index] || null;
       const button = entry?.button || null;
@@ -170,11 +174,15 @@ async function clickInlineAction(page, { action, textMatch = "", index = 0 }) {
           .slice(0, 500)
       };
     }`,
-    { action, textMatch, index }
+    { action, textMatch, urlMatch, index }
   );
 }
 
-async function waitForInlineState(page, { textMatch = "", expectText = "", rowOpacity, rowContains = "" }, timeout = 60000) {
+async function waitForInlineState(
+  page,
+  { action = "", textMatch = "", urlMatch = "", index = 0, expectText = "", rowOpacity, rowContains = "" },
+  timeout = 60000
+) {
   await page.waitForFunction(
     async (payload) => {
       const webview = document.querySelector("#webview-stack webview");
@@ -185,6 +193,7 @@ async function waitForInlineState(page, { textMatch = "", expectText = "", rowOp
         return await webview.executeJavaScript(
           `((config) => {
             const needle = String(config.textMatch || "").toLowerCase();
+            const urlNeedle = String(config.urlMatch || "").toLowerCase();
             const resolveContainer = (group) => {
               let pointer = group;
               while (pointer && pointer !== document.body) {
@@ -198,20 +207,30 @@ async function waitForInlineState(page, { textMatch = "", expectText = "", rowOp
               return group.parentElement || group;
             };
             const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
-            const entry = groups.map((group) => {
+            const candidates = groups.map((group, groupIndex) => {
               const buttons = Array.from(group.querySelectorAll("button"));
-              const button = buttons.find((candidate) => {
-                if (!config.expectText) {
-                  return true;
-                }
-                return String(candidate.textContent || "").replace(/\\s+/g, " ").trim() === config.expectText;
-              }) || buttons[0] || null;
+              const button = config.action
+                ? buttons.find((candidate) => candidate.classList.contains(config.action)) || null
+                : buttons.find((candidate) => {
+                    if (!config.expectText) {
+                      return true;
+                    }
+                    return String(candidate.textContent || "").replace(/\\s+/g, " ").trim() === config.expectText;
+                  }) || buttons[0] || null;
               const container = resolveContainer(group);
               const text = String(container?.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
-              return { button, container, text };
-            }).find((candidate) => {
-              return needle ? candidate.text.includes(needle) : true;
+              const url = String(group.getAttribute("data-trove-library-url") || "").toLowerCase();
+              return { button, container, text, url, groupIndex };
+            }).filter((candidate) => {
+              if (needle && !candidate.text.includes(needle)) {
+                return false;
+              }
+              if (urlNeedle && !candidate.url.includes(urlNeedle)) {
+                return false;
+              }
+              return true;
             });
+            const entry = candidates[Number(config.index || 0)] || null;
             const button = entry?.button || null;
             const container = entry?.container || null;
             if (!button || !container) {
@@ -240,7 +259,7 @@ async function waitForInlineState(page, { textMatch = "", expectText = "", rowOp
         return false;
       }
     },
-    { textMatch, expectText, rowOpacity, rowContains },
+    { action, textMatch, urlMatch, index, expectText, rowOpacity, rowContains },
     { timeout }
   );
 }

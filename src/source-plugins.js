@@ -691,6 +691,36 @@
         const getIgnoredUrls = () => new Set((window[stateKey]?.ignoredUrls || []).map((url) => normalize(url)).filter(Boolean));
         const getSavedMatchKeys = () => new Set((window[stateKey]?.savedMatchKeys || []).filter(Boolean));
         const getIgnoredMatchKeys = () => new Set((window[stateKey]?.ignoredMatchKeys || []).filter(Boolean));
+        const getControlGroupsForUrl = (href) => {
+          const normalizedHref = normalize(href);
+          if (!normalizedHref) {
+            return [];
+          }
+          const targetMatchKeys = getMatchKeys(normalizedHref);
+          return Array.from(document.querySelectorAll("." + actionClass)).filter((group) => {
+            const groupUrl = normalize(group.getAttribute("data-trove-library-url") || "");
+            if (!groupUrl) {
+              return false;
+            }
+            if (groupUrl === normalizedHref) {
+              return true;
+            }
+            const groupMatchKeys = getMatchKeys(groupUrl);
+            return groupMatchKeys.some((key) => targetMatchKeys.includes(key));
+          });
+        };
+        const getControlGroupForAnchor = (anchor, href) => {
+          const normalizedHref = normalize(href);
+          const adjacent = anchor.nextElementSibling;
+          if (
+            adjacent &&
+            adjacent.classList.contains(actionClass) &&
+            normalize(adjacent.getAttribute("data-trove-library-url") || "") === normalizedHref
+          ) {
+            return adjacent;
+          }
+          return getControlGroupsForUrl(normalizedHref)[0] || null;
+        };
         const getEntryContainer = (anchor, href) => {
           if (!anchor || !href) {
             return null;
@@ -809,6 +839,68 @@
             return Boolean(anchor.closest(".wrap") && anchor.parentElement?.classList.contains("title"));
           }
           return false;
+        };
+        const getControlsEntryContainer = (controls) =>
+          controls.closest(".result, .search-result-item, .briefcitDetail, .browseEntry, .bibRecordLink, article, li, tr, .record, .item, .wrap") ||
+          controls.parentElement;
+        const applyControlsState = (controls) => {
+          if (!controls) {
+            return;
+          }
+          const href = normalize(controls.getAttribute("data-trove-library-url") || "");
+          if (!href) {
+            return;
+          }
+          const entryStatus = resolveStatusForHref(href);
+          const loadingByUrl = window[stateKey]?.loadingByUrl || {};
+          const loadingEntry = loadingByUrl[href] || null;
+          const loadingAction = loadingEntry?.action || "";
+          const loadingLabel = loadingEntry?.label || "";
+          const entryContainer = getControlsEntryContainer(controls);
+          const preview = controls.querySelector(".preview");
+          const collect = controls.querySelector(".collect");
+          const ignore = controls.querySelector(".ignore");
+
+          entryContainer?.classList.remove("trove-library-entry-saved", "trove-library-entry-ignored");
+          if (entryStatus === "saved" || entryStatus === "ignored") {
+            entryContainer?.classList.add(entryStatus === "saved" ? "trove-library-entry-saved" : "trove-library-entry-ignored");
+          }
+
+          if (preview) {
+            preview.classList.toggle("is-loading", loadingAction === "preview");
+            preview.disabled = loadingAction === "preview";
+            preview.textContent = loadingAction === "preview" ? loadingLabel || "Previewing…" : "Preview";
+          }
+          if (collect) {
+            collect.classList.remove("saved", "ignored");
+            collect.classList.toggle("is-loading", loadingAction === "collect" || loadingAction === "uncollect");
+            collect.disabled = loadingAction === "collect" || loadingAction === "uncollect";
+            if (entryStatus === "saved") {
+              collect.classList.add("saved");
+              collect.textContent = loadingAction === "uncollect" ? loadingLabel || "Removing…" : "Collected";
+              collect.disabled = loadingAction === "uncollect";
+            } else {
+              collect.textContent = loadingAction === "collect" ? loadingLabel || "Collecting…" : "Collect";
+            }
+          }
+          if (ignore) {
+            ignore.classList.remove("ignored");
+            ignore.classList.toggle("is-loading", loadingAction === "ignore" || loadingAction === "unignore");
+            ignore.disabled = loadingAction === "ignore" || loadingAction === "unignore";
+            if (entryStatus === "saved") {
+              ignore.textContent = "Ignore";
+              ignore.hidden = true;
+              ignore.disabled = true;
+            } else if (entryStatus === "ignored") {
+              ignore.classList.add("ignored");
+              ignore.textContent = loadingAction === "unignore" ? loadingLabel || "Unignoring…" : "Unignore";
+              ignore.hidden = false;
+              ignore.disabled = loadingAction === "unignore";
+            } else {
+              ignore.textContent = loadingAction === "ignore" ? loadingLabel || "Ignoring…" : "Ignore";
+              ignore.hidden = false;
+            }
+          }
         };
         if (!document.getElementById(styleId)) {
           const style = document.createElement("style");
@@ -945,69 +1037,22 @@
           currentState.apply?.();
         };
         const ensureInlineActions = (anchor, href, forcedStatus = "") => {
-          const entryStatus = forcedStatus || resolveEntryStatus(anchor, href);
+          const normalizedHref = normalize(href);
           if (anchor.dataset.troveLibraryBound === "true") {
-            const existing = anchor.nextElementSibling;
+            const existing = getControlGroupForAnchor(anchor, href);
             if (existing && existing.classList.contains(actionClass)) {
-              const preview = existing.querySelector(".preview");
-              const collect = existing.querySelector(".collect");
-              const ignore = existing.querySelector(".ignore");
-              const loadingByUrl = window[stateKey]?.loadingByUrl || {};
-              const loadingEntry = loadingByUrl[normalize(href)] || null;
-              const loadingAction = loadingEntry?.action || "";
-              const loadingLabel = loadingEntry?.label || "";
-              if (preview) {
-                preview.classList.toggle("is-loading", loadingAction === "preview");
-                preview.disabled = loadingAction === "preview";
-                preview.textContent = loadingAction === "preview" ? loadingLabel || "Previewing…" : "Preview";
-              }
-              if (entryStatus === "saved") {
-                collect.classList.add("saved");
-                collect.classList.remove("ignored");
-                collect.textContent = loadingAction === "uncollect" ? loadingLabel || "Removing…" : "Collected";
-                collect.disabled = false;
-                collect.classList.toggle("is-loading", loadingAction === "uncollect");
-                if (ignore) {
-                  ignore.classList.remove("ignored");
-                  ignore.textContent = "Ignore";
-                  ignore.disabled = true;
-                  ignore.hidden = true;
-                  ignore.classList.remove("is-loading");
-                }
-              } else if (entryStatus === "ignored") {
-                collect.classList.remove("saved", "ignored");
-                collect.textContent = loadingAction === "collect" ? loadingLabel || "Collecting…" : "Collect";
-                collect.disabled = loadingAction === "collect";
-                collect.classList.toggle("is-loading", loadingAction === "collect");
-                if (ignore) {
-                  ignore.classList.add("ignored");
-                  ignore.textContent = loadingAction === "unignore" ? loadingLabel || "Unignoring…" : "Unignore";
-                  ignore.disabled = loadingAction === "unignore";
-                  ignore.hidden = false;
-                  ignore.classList.toggle("is-loading", loadingAction === "unignore");
-                }
-              } else {
-                collect.classList.remove("saved", "ignored");
-                collect.textContent = loadingAction === "collect" ? loadingLabel || "Collecting…" : "Collect";
-                collect.disabled = loadingAction === "collect";
-                collect.classList.toggle("is-loading", loadingAction === "collect");
-                if (ignore) {
-                  ignore.classList.remove("ignored");
-                  ignore.textContent = loadingAction === "ignore" ? loadingLabel || "Ignoring…" : "Ignore";
-                  ignore.disabled = loadingAction === "ignore";
-                  ignore.hidden = false;
-                  ignore.classList.toggle("is-loading", loadingAction === "ignore");
-                }
-              }
+              applyControlsState(existing);
             }
             return;
           }
           anchor.dataset.troveLibraryBound = "true";
           const controls = document.createElement("span");
           controls.className = actionClass;
+          controls.setAttribute("data-trove-library-url", normalizedHref);
           const preview = document.createElement("button");
           preview.type = "button";
           preview.className = "preview";
+          preview.setAttribute("data-trove-library-url", normalizedHref);
           preview.textContent = "Preview";
           preview.addEventListener("click", (event) => {
             event.preventDefault();
@@ -1018,6 +1063,7 @@
           const collect = document.createElement("button");
           collect.type = "button";
           collect.className = "collect";
+          collect.setAttribute("data-trove-library-url", normalizedHref);
           collect.textContent = "Collect";
           collect.addEventListener("click", (event) => {
             event.preventDefault();
@@ -1033,6 +1079,7 @@
           const ignore = document.createElement("button");
           ignore.type = "button";
           ignore.className = "ignore";
+          ignore.setAttribute("data-trove-library-url", normalizedHref);
           ignore.textContent = "Ignore";
           ignore.addEventListener("click", (event) => {
             event.preventDefault();
@@ -1047,9 +1094,9 @@
           });
           controls.append(preview, collect, ignore);
           anchor.insertAdjacentElement("afterend", controls);
-          ensureInlineActions(anchor, href);
+          applyControlsState(controls);
         };
-          const apply = () => {
+        const apply = () => {
           document.querySelectorAll("a.trove-library-saved, a.trove-library-ignored").forEach((node) => {
             node.classList.remove("trove-library-saved", "trove-library-ignored");
           });
@@ -1074,6 +1121,9 @@
               anchor.classList.add("trove-library-ignored");
               entryContainer?.classList.add("trove-library-entry-ignored");
             }
+          });
+          document.querySelectorAll("." + actionClass).forEach((controls) => {
+            applyControlsState(controls);
           });
           const currentUrl = normalize(location.href);
           let badge = document.getElementById(badgeId);
@@ -1151,6 +1201,20 @@
         }
 
         const pageState = window[stateKey] || (window[stateKey] = {});
+        const scheduleApplyRetry = () => {
+          if (typeof pageState.apply !== "function") {
+            return;
+          }
+          [0, 80, 240].forEach((delay) => {
+            window.setTimeout(() => {
+              try {
+                pageState.apply();
+              } catch {
+                // Keep trying while the page is still mutating.
+              }
+            }, delay);
+          });
+        };
         const savedUrls = new Set((pageState.savedUrls || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const ignoredUrls = new Set((pageState.ignoredUrls || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const savedMatchKeys = new Set((pageState.savedMatchKeys || []).filter(Boolean));
@@ -1192,66 +1256,18 @@
         if (typeof pageState.apply === "function") {
           try {
             pageState.apply();
-            return;
           } catch {
             // Fall through to the direct DOM patch path if the page mutates mid-apply.
           }
         }
 
-        document.querySelectorAll("a[href]").forEach((anchor) => {
-          const href = (${normalizeUrl.toString()})(anchor.href);
-          if (!href) {
-            return;
+        if (typeof pageState.apply === "function") {
+          try {
+            pageState.apply();
+          } catch {
+            // Let the scheduled retry handle transient DOM churn.
           }
-          const hrefMatchKeys = getMatchKeys(href);
-          const isMatched = urls.has(href) || hrefMatchKeys.some((key) => clearedMatchKeys.has(key));
-          if (!isMatched) {
-            return;
-          }
-          const entryContainer = (anchor.closest("article, li, .result, .search-result, .record, .item, tr") || anchor.parentElement);
-          anchor.classList.remove("trove-library-saved", "trove-library-ignored");
-          entryContainer?.classList.remove("trove-library-entry-saved", "trove-library-entry-ignored");
-          if (status === "saved" || status === "ignored") {
-            anchor.classList.add(status === "saved" ? "trove-library-saved" : "trove-library-ignored");
-            entryContainer?.classList.add(status === "saved" ? "trove-library-entry-saved" : "trove-library-entry-ignored");
-          }
-          const controls = anchor.nextElementSibling;
-          if (controls && controls.classList.contains(actionClass)) {
-            const collect = controls.querySelector(".collect");
-            const ignore = controls.querySelector(".ignore");
-            if (collect) {
-              collect.classList.remove("saved", "ignored");
-              if (status === "saved") {
-                collect.classList.add("saved");
-                collect.textContent = "Collected";
-                collect.disabled = false;
-              } else if (status === "ignored") {
-                collect.textContent = "Collect";
-                collect.disabled = false;
-              } else {
-                collect.textContent = "Collect";
-                collect.disabled = false;
-              }
-            }
-            if (ignore) {
-              ignore.classList.remove("ignored");
-              if (status === "saved") {
-                ignore.textContent = "Ignore";
-                ignore.disabled = true;
-                ignore.hidden = true;
-              } else if (status === "ignored") {
-                ignore.classList.add("ignored");
-                ignore.textContent = "Unignore";
-                ignore.disabled = false;
-                ignore.hidden = false;
-              } else {
-                ignore.textContent = "Ignore";
-                ignore.disabled = false;
-                ignore.hidden = false;
-              }
-            }
-          }
-        });
+        }
 
         const currentUrl = (${normalizeUrl.toString()})(location.href);
         const existingBadge = document.getElementById(badgeId);
@@ -1268,6 +1284,7 @@
           badge.textContent = status === "saved" ? "Collected in library" : "Ignored in library";
           document.body.appendChild(badge);
         }
+        scheduleApplyRetry();
       })();
     `;
   }
@@ -1280,12 +1297,27 @@
         const label = ${JSON.stringify(payload.label || "")};
         const urls = new Set((${JSON.stringify(payload.urls || [])} || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const stateKey = "__troveLibraryPageState";
+        const actionClass = "trove-library-inline-actions";
         const normalizeUrl = ${normalizeUrl.toString()};
         const getMatchKeys = ${getMatchKeys.toString()};
         if (!urls.size) {
           return;
         }
         const pageState = window[stateKey] || (window[stateKey] = {});
+        const scheduleApplyRetry = () => {
+          if (typeof pageState.apply !== "function") {
+            return;
+          }
+          [0, 80, 240].forEach((delay) => {
+            window.setTimeout(() => {
+              try {
+                pageState.apply();
+              } catch {
+                // Keep trying while the page is still mutating.
+              }
+            }, delay);
+          });
+        };
         const loadingByUrl = { ...(pageState.loadingByUrl || {}) };
         const clearedMatchKeys = new Set();
         urls.forEach((url) => {
@@ -1308,8 +1340,20 @@
         }
         pageState.loadingByUrl = loadingByUrl;
         if (typeof pageState.apply === "function") {
-          pageState.apply();
+          try {
+            pageState.apply();
+          } catch {
+            // Fall through to the direct DOM patch path when the page mutates mid-apply.
+          }
         }
+        if (typeof pageState.apply === "function") {
+          try {
+            pageState.apply();
+          } catch {
+            // Let the scheduled retry handle transient DOM churn.
+          }
+        }
+        scheduleApplyRetry();
       })();
     `;
   }

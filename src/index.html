@@ -79,10 +79,24 @@
             </section>
             <section class="capture-section">
               <div class="capture-markdown-wrap">
+                <div id="capture-find-bar" class="capture-find-bar" hidden>
+                  <input
+                    id="capture-find-input"
+                    type="search"
+                    class="capture-find-input"
+                    placeholder="Find in preview"
+                    spellcheck="false"
+                    aria-label="Find in preview markdown"
+                  >
+                  <span id="capture-find-count" class="capture-find-count">0/0</span>
+                  <button id="capture-find-prev" type="button" class="capture-find-button ghost-button" aria-label="Previous match">↑</button>
+                  <button id="capture-find-next" type="button" class="capture-find-button ghost-button" aria-label="Next match">↓</button>
+                  <button id="capture-find-close" type="button" class="capture-find-button ghost-button" aria-label="Close find">✕</button>
+                </div>
                 <button id="capture-copy-markdown" type="button" class="capture-copy-markdown" aria-label="Copy markdown preview" title="Copy markdown preview">
                   ⧉
                 </button>
-                <div id="capture-markdown" class="capture-markdown"></div>
+                <div id="capture-markdown" class="capture-markdown" tabindex="0"></div>
               </div>
             </section>
           </div>
@@ -203,6 +217,24 @@
             <p id="message" class="message-text">Select a project in the library, then browse Trove or SLWA normally.</p>
           </div>
         </footer>
+
+        <aside id="queue-tray" class="queue-tray" hidden aria-live="polite">
+          <button
+            id="queue-tray-toggle"
+            type="button"
+            class="queue-tray-toggle"
+            aria-expanded="false"
+            aria-controls="queue-tray-panel"
+          >
+            <span class="queue-tray-spinner" aria-hidden="true"></span>
+            <span id="queue-tray-count" class="queue-tray-count">0</span>
+          </button>
+          <div id="queue-tray-panel" class="queue-tray-panel" hidden>
+            <p class="queue-tray-label">Queue</p>
+            <strong id="queue-tray-current" class="queue-tray-current"></strong>
+            <p id="queue-tray-meta" class="queue-tray-meta"></p>
+          </div>
+        </aside>
 
         <section id="debug-drawer" class="debug-drawer" hidden>
           <div class="debug-toolbar">
