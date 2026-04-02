@@ -8,17 +8,29 @@ The point of it is simple: save full-resolution images and markdown into a local
 
 ## Screenshots
 
-Collect view. Search live, preview a record, then collect or ignore it while the decision stays attached to later search passes.
+Search live on Trove or SLWA, save the search, and work through results with inline controls.
 
-![Collect view](docs/screenshots/collect.png)
+![Searching](docs/screenshots/searching.jpeg)
 
-Library view. Reopen saved searches, inspect what has already been collected, and work back through the local library on disk.
+Preview a record before collecting it, with the extracted text or image shown in the side pane.
 
-![Library view](docs/screenshots/library.png)
+![Library finder](docs/screenshots/library-finder.jpeg)
 
-Paste links dialog. Paste research notes full of Trove or SLWA links, see what is already collected or ignored, and open the unresolved ones for triage.
+Collect or ignore as you go. Decisions stay attached to records when they turn up again in later searches.
 
-![Paste links dialog](docs/screenshots/paste-links.png)
+![Ignoring](docs/screenshots/ignoring.jpeg)
+
+Work back through the local library on disk, reopen saved searches, and inspect what has already been collected.
+
+![Library](docs/screenshots/library.jpeg)
+
+Paste research notes full of Trove or SLWA links, extract the URLs, and open unresolved ones for triage.
+
+![Links](docs/screenshots/links.jpeg)
+
+If you need to map a new site, save debug dumps of the page structure and build an unofficial adapter from that material.
+
+![Debug dumps](docs/screenshots/debug.jpeg)
 
 The screenshots live in `docs/screenshots/`.
 

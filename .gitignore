@@ -5,7 +5,7 @@ tmp/
 coverage/
 playwright-report/
 dist/
-screenshots/
+/screenshots/
 button-width-proof-*/
 preview-drift-debug-*/
 preview-scope-debug-*/
