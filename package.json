@@ -1,6 +1,6 @@
 {
   "name": "australian-library-browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Collect material from Australian collections into self-describing research libraries.",
   "author": "Patrick Morrison",
   "private": true,
