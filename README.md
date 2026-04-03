@@ -9,7 +9,7 @@ Run it either way:
 
 Built on April 1-2, 2026 as an experiment in spinning up a custom research browser. It is vibe-coded, so do not expect my usual standard. The tyres have been kicked, but use it at your own risk. I am writing the history of Wellington Dam, and this was built to speed up and improve the workflow for handling primary research notes.
 
-The point of it is simple: save full-resolution images and markdown into a local library, keep the primary record on disk, and make that material searchable, summarizable, and cross-referenceable with help from Codex or Claude Code.
+The point of it is simple: save full-resolution images and markdown into a local library, keep the primary record on disk, and make that material searchable, summarisable, and cross-referenceable with help from Codex or Claude Code.
 
 ## Screenshots
 
