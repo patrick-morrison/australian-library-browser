@@ -190,24 +190,46 @@
 
         <section id="plugins-view" class="plugins-view app-view" hidden>
           <div class="plugins-stage">
-            <article class="plugins-card plugins-card-primary">
-              <h2>Supported Sources</h2>
-              <div id="plugins-supported" class="plugins-supported"></div>
-            </article>
-            <article class="plugins-card">
-              <h2>New Source Intake</h2>
-              <p class="message-text">Paste representative URLs from a new library site: a landing page, search results, one or two detail pages, and a media page if it has one.</p>
-              <label class="plugins-field" for="plugin-seed-urls">Seed URLs</label>
-              <textarea id="plugin-seed-urls" class="plugins-textarea" spellcheck="false" placeholder="https://example-library/search?q=wellington+dam&#10;https://example-library/record/123&#10;https://example-library/object/456"></textarea>
-              <div class="plugins-actions">
-                <button id="plugin-copy-prompt" type="button" class="primary-action">Copy Prompt</button>
-                <button id="plugin-copy-probe-command" type="button" class="ghost-button">Copy Probe Command</button>
+            <article class="plugins-card plugins-card-primary settings-hero-card">
+              <h2>Import Existing Research Notes</h2>
+              <p class="message-text">Pull supported collection links out of any text.</p>
+              <label class="plugins-field" for="plugin-seed-urls">Paste or drop notes</label>
+              <div id="plugin-drop-zone" class="plugin-drop-zone" tabindex="0">
+                <textarea id="plugin-seed-urls" class="plugins-textarea" spellcheck="false" placeholder="Paste notes here, or drop Markdown, HTML, XML, DOCX, PDF, or plain text"></textarea>
+                <span>Drop files anywhere in this box</span>
               </div>
-              <p id="plugin-status" class="message-text">Paste URLs to generate a reusable Codex/Claude integration prompt.</p>
+              <div class="plugin-triage-head">
+                <strong>Import Triage</strong>
+                <div class="plugins-actions">
+                  <button id="plugin-open-selected" type="button" class="primary-action" disabled>Review Links</button>
+                  <button id="plugin-clear-intake" type="button" class="ghost-button" disabled>Clear</button>
+                </div>
+              </div>
+              <div id="plugin-url-analysis" class="plugin-url-analysis empty-state">Paste or drop notes to find collection links.</div>
             </article>
-            <article class="plugins-card plugins-card-muted">
-              <h2>Integration Prompt</h2>
-              <pre id="plugin-prompt-output" class="plugin-prompt-output"></pre>
+
+            <article class="plugins-card settings-compact-card">
+              <div class="settings-card-head">
+                <h2>Sources</h2>
+                <span class="section-count">Built in</span>
+              </div>
+              <div id="plugins-supported" class="plugins-supported plugins-supported-compact"></div>
+            </article>
+
+            <article class="plugins-card settings-compact-card">
+              <h2>Collection</h2>
+              <ul class="settings-list">
+                <li>Requests are queued and paced per host.</li>
+                <li>Collect and Ignore show immediate state.</li>
+                <li>Unsupported pages can be probed before adding an adapter.</li>
+              </ul>
+            </article>
+
+            <article class="plugins-card settings-compact-card">
+              <div class="settings-card-head">
+                <h2>Diagnostics</h2>
+                <button id="settings-open-debug" type="button" class="ghost-button">Open Debug Tools</button>
+              </div>
             </article>
           </div>
         </section>
@@ -252,6 +274,7 @@
               <button id="debug-save-page" type="button" class="ghost-button">Dump Page</button>
               <button id="debug-save-item" type="button" class="ghost-button">Dump Item</button>
               <button id="debug-save-preview" type="button" class="ghost-button">Dump Preview</button>
+              <button id="debug-perf-snapshot" type="button" class="ghost-button">Perf Snapshot</button>
               <button id="debug-close" type="button" class="ghost-button">Close</button>
             </div>
           </div>

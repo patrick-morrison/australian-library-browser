@@ -30,9 +30,11 @@ const BROWSER_FETCH_HEADERS = {
   "accept-language": "en-AU,en;q=0.9",
   "upgrade-insecure-requests": "1"
 };
+const HOST_FETCH_INTERVAL_MS = Number(process.env.TROVE_BROWSER_HOST_FETCH_INTERVAL_MS || 900);
 let mainWindow = null;
 let rendererReady = false;
 let pendingTabUrls = [];
+const hostFetchQueues = new Map();
 const MIN_WEBCONTENTS_LISTENER_LIMIT = 64;
 
 function ensureWebContentsListenerCapacity(contents) {
@@ -153,7 +155,31 @@ function getCollectionSession() {
   return session.fromPartition(WEBVIEW_PARTITION);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function paceHostRequest(targetUrl) {
+  if (!HOST_FETCH_INTERVAL_MS) {
+    return;
+  }
+  let hostname = "";
+  try {
+    hostname = new URL(targetUrl).hostname.toLowerCase();
+  } catch {
+    return;
+  }
+  const previous = hostFetchQueues.get(hostname) || Promise.resolve();
+  const queued = previous.catch(() => {}).then(() => delay(HOST_FETCH_INTERVAL_MS));
+  hostFetchQueues.set(hostname, queued);
+  await queued;
+  if (hostFetchQueues.get(hostname) === queued) {
+    hostFetchQueues.delete(hostname);
+  }
+}
+
 async function fetchTextWithSession(collectionSession, targetUrl) {
+  await paceHostRequest(targetUrl);
   const response = await collectionSession.fetch(targetUrl, {
     method: "GET",
     headers: BROWSER_FETCH_HEADERS
@@ -178,6 +204,7 @@ async function resolveRenderedTroveBridgeUrl(targetUrl) {
   });
 
   try {
+    await paceHostRequest(targetUrl);
     await bridgeWindow.loadURL(targetUrl, { userAgent: BROWSER_USER_AGENT });
     const bridgeUrl = await bridgeWindow.webContents.executeJavaScript(
       `
@@ -651,6 +678,7 @@ app.whenReady().then(() => {
     return projectPath;
   });
   ipcMain.handle("files:read-text", async (_event, targetPath) => fs.readFile(targetPath, "utf8"));
+  ipcMain.handle("files:read-bytes", async (_event, targetPath) => Array.from(await fs.readFile(targetPath)));
   ipcMain.handle("shell:open-path", async (_event, targetPath) => shell.openPath(targetPath));
   ipcMain.handle("shell:open-external", async (_event, targetUrl) => shell.openExternal(targetUrl));
   ipcMain.handle("clipboard:write-text", async (_event, value) => {

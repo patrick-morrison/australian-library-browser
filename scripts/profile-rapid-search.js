@@ -111,7 +111,7 @@ async function waitForPreviewingAtIndex(page, index, timeout = 10000) {
           `((index) => {
             const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
             const button = groups[index]?.querySelector("button.preview");
-            return Boolean(button && /Previewing…|Previewing\\.\\.\\./i.test(String(button.textContent || "").trim()));
+            return Boolean(button && button.classList.contains("is-loading"));
           })(${JSON.stringify(targetIndex)})`,
           true
         );
@@ -124,21 +124,111 @@ async function waitForPreviewingAtIndex(page, index, timeout = 10000) {
   );
 }
 
-async function waitForCaptureMatch(page, target, timeout = 120000) {
+async function getPreviewLoadingState(page) {
+  return webviewEval(
+    page,
+    `() => {
+      const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
+      return groups
+        .map((group, index) => {
+          const button = group.querySelector("button.preview");
+          return {
+            index,
+            loading: Boolean(button?.classList.contains("is-loading")),
+            text: String(button?.textContent || "").trim()
+          };
+        })
+        .filter((entry) => entry.loading);
+    }`,
+    null
+  );
+}
+
+async function waitForPreviewIdle(page, timeout = 15000) {
   await page.waitForFunction(
+    async () => {
+      const webview = document.querySelector("#webview-stack webview");
+      if (!webview) {
+        return false;
+      }
+      try {
+        return await webview.executeJavaScript(
+          `(() => !document.querySelector(".trove-library-inline-actions button.preview.is-loading"))()`,
+          true
+        );
+      } catch {
+        return false;
+      }
+    },
+    null,
+    { timeout }
+  );
+}
+
+async function getAppSnapshot(page) {
+  return page.evaluate(() => {
+    const snapshot = window.trovePerf?.snapshot?.() || null;
+    const status = document.querySelector("#page-status")?.textContent || "";
+    const empty = document.querySelector("#capture-empty")?.textContent || "";
+    const markdown = document.querySelector("#capture-markdown")?.innerText || "";
+    return {
+      status,
+      empty,
+      markdownStart: markdown.slice(0, 500),
+      snapshot
+    };
+  });
+}
+
+async function waitForCaptureMatch(page, target, timeout = 120000) {
+  const matched = await page.waitForFunction(
     (expected) => {
       const status = (document.querySelector("#page-status")?.textContent || "").toLowerCase();
       const markdown = document.querySelector("#capture-markdown")?.innerText || "";
       const expectedUrl = String(expected.href || "");
+      const expectedCanonicalUrl = expectedUrl.replace(/[?#].*$/, "");
       const expectedTitle = String(expected.title || "").toLowerCase();
+      const normalizeTitle = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
       return (
         (expectedUrl && markdown.includes(expectedUrl)) ||
-        (expectedTitle && (status.includes(expectedTitle) || markdown.toLowerCase().includes(expectedTitle)))
+        (expectedCanonicalUrl && markdown.includes(expectedCanonicalUrl)) ||
+        (expectedTitle &&
+          (normalizeTitle(status).includes(normalizeTitle(expectedTitle)) ||
+            normalizeTitle(markdown).includes(normalizeTitle(expectedTitle))))
       );
     },
     target,
     { timeout }
   );
+  return Boolean(await matched.jsonValue());
+}
+
+async function waitForCaptureSettled(page, target, timeout = 35000) {
+  return page.waitForFunction(
+    (expected) => {
+      const status = (document.querySelector("#page-status")?.textContent || "").toLowerCase();
+      const empty = (document.querySelector("#capture-empty")?.textContent || "").toLowerCase();
+      const markdown = document.querySelector("#capture-markdown")?.innerText || "";
+      const expectedUrl = String(expected.href || "");
+      const expectedCanonicalUrl = expectedUrl.replace(/[?#].*$/, "");
+      const expectedTitle = String(expected.title || "").toLowerCase();
+      const normalizeTitle = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const matched =
+        (expectedUrl && markdown.includes(expectedUrl)) ||
+        (expectedCanonicalUrl && markdown.includes(expectedCanonicalUrl)) ||
+        (expectedTitle &&
+          (normalizeTitle(status).includes(normalizeTitle(expectedTitle)) ||
+            normalizeTitle(markdown).includes(normalizeTitle(expectedTitle))));
+      const failed =
+        status.includes("taking too long") ||
+        status.includes("could not build") ||
+        empty.includes("taking too long") ||
+        empty.includes("could not build");
+      return matched || failed ? { matched, failed, status, empty } : false;
+    },
+    target,
+    { timeout }
+  ).then((handle) => handle.jsonValue());
 }
 
 async function run() {
@@ -177,13 +267,32 @@ async function run() {
         label: target.text.slice(0, 140),
         ackMs: Math.round(performance.now() - clickStarted)
       });
-      await page.waitForTimeout(120);
+      const loadingState = await getPreviewLoadingState(page);
+      if (loadingState.length > 1) {
+        throw new Error(`Expected only the latest preview spinner, found ${loadingState.length}.`);
+      }
+      await page.waitForTimeout(60);
     }
 
     const lastTarget = targets[targets.length - 1];
     const finalPreviewStarted = performance.now();
-    await waitForCaptureMatch(page, lastTarget, 120000);
+    let settled = null;
+    try {
+      settled = await waitForCaptureSettled(page, lastTarget, 45000);
+    } catch (error) {
+      const loadingState = await getPreviewLoadingState(page).catch(() => []);
+      const appSnapshot = await getAppSnapshot(page).catch((snapshotError) => ({
+        error: snapshotError?.message || String(snapshotError)
+      }));
+      throw new Error(
+        `Final preview did not settle before timeout.\n${JSON.stringify({ loadingState, appSnapshot }, null, 2)}`
+      );
+    }
     const finalPreviewMs = Math.round(performance.now() - finalPreviewStarted);
+    await waitForPreviewIdle(page, 15000);
+    if (!settled?.matched) {
+      throw new Error(`Final preview did not render: ${settled?.status || settled?.empty || "unknown preview state"}`);
+    }
 
     const inlineShot = await screenshot(page, "rapid-search-inline-state.png");
     const previewShot = await screenshot(page, "rapid-search-final-preview.png");

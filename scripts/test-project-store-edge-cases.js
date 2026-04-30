@@ -19,7 +19,16 @@ async function listFiles(root) {
 }
 
 async function readProject(projectPath) {
-  const raw = await fs.readFile(path.join(projectPath, "project.yaml"), "utf8");
+  const manifestPath = path.join(projectPath, `${path.basename(projectPath)}.trovelibrary`);
+  let raw = "";
+  try {
+    raw = await fs.readFile(manifestPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+    raw = await fs.readFile(path.join(projectPath, "project.yaml"), "utf8");
+  }
   return yaml.load(raw) || {};
 }
 

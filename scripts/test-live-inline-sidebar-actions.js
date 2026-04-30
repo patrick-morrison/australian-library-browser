@@ -14,6 +14,7 @@ const {
   waitForInlineState,
   waitForPreview,
   clickSidebarCollect,
+  waitForSidebarActionFeedback,
   waitForSidebarCollectState,
   screenshot,
   cleanupProject
@@ -67,10 +68,11 @@ async function run() {
     const previewTarget = "https://trove.nla.gov.au/newspaper/article/260382127";
     const collectTarget = "https://trove.nla.gov.au/newspaper/article/209256127";
     const ignoreTarget = "https://trove.nla.gov.au/newspaper/article/253406851";
-    const ignorePersistTarget = "https://trove.nla.gov.au/newspaper/article/32575438";
 
-    await clickInlineAction(page, { action: "preview", urlMatch: previewTarget });
-    await waitForInlineState(page, { action: "preview", urlMatch: previewTarget, expectText: "Previewing…" }, 10000);
+    const previewClick = await clickInlineAction(page, { action: "preview", urlMatch: previewTarget });
+    if (!previewClick.ok) {
+      throw new Error(`Could not click inline Preview for ${previewTarget}.`);
+    }
     await waitForPreview(page, "text", {
       markdownIncludes: "https://trove.nla.gov.au/newspaper/article/260382127",
       timeout: 60000
@@ -81,8 +83,11 @@ async function run() {
       throw new Error("Preview pane did not settle on the previewed search result.");
     }
 
-    await clickInlineAction(page, { action: "collect", urlMatch: collectTarget });
-    await waitForInlineState(page, { action: "collect", urlMatch: collectTarget, expectText: "Collecting…" }, 10000);
+    const collectClick = await clickInlineAction(page, { action: "collect", urlMatch: collectTarget });
+    if (!collectClick.ok) {
+      throw new Error(`Could not click inline Collect for ${collectTarget}.`);
+    }
+    await waitForInlineState(page, { action: "collect", urlMatch: collectTarget, expectText: "Collected" }, 1500);
     const duringCollect = await readCaptureSnapshot(page);
     if (!duringCollect.markdown.toLowerCase().includes("https://trove.nla.gov.au/newspaper/article/260382127")) {
       throw new Error("Preview pane was contaminated by inline collect on another row.");
@@ -93,7 +98,6 @@ async function run() {
     if (/collected/i.test(duringCollect.collectText)) {
       throw new Error("Sidebar collect button should not flip to Collected for another row's inline collect.");
     }
-    await waitForInlineState(page, { action: "collect", urlMatch: collectTarget, expectText: "Collected" }, 120000);
 
     let manifest = await waitForManifest(
       project.projectDir,
@@ -110,8 +114,11 @@ async function run() {
       throw new Error("Sidebar collect button should stay scoped to the previewed article after another row is collected.");
     }
 
-    await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
-    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Ignoring…" }, 10000);
+    const ignoreClick = await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
+    if (!ignoreClick.ok) {
+      throw new Error(`Could not click inline Ignore for ${ignoreTarget}.`);
+    }
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Unignore", rowOpacity: 0.6 }, 1500);
     await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Unignore", rowOpacity: 0.6 }, 120000);
     const ignoreShot = await screenshot(page, "live-inline-ignore-greyed.png");
 
@@ -130,28 +137,12 @@ async function run() {
       throw new Error("Preview pane changed after inline ignore on a different row.");
     }
 
-    await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
-    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Unignoring…" }, 10000);
-    await page.waitForFunction(
-      (urlNeedle) => {
-        const groups = Array.from(document.querySelectorAll(".trove-library-inline-actions"));
-        const target = groups.find((group) =>
-          String(group.getAttribute("data-trove-library-url") || "").toLowerCase().includes(String(urlNeedle).toLowerCase())
-        );
-        const ignoreButton = target?.querySelector(".ignore");
-        const container =
-          target?.closest(".result, .search-result-item, .briefcitDetail, .browseEntry, .bibRecordLink, article, li, tr, .record, .item, .wrap") ||
-          target?.parentElement;
-        if (!ignoreButton || !container) {
-          return false;
-        }
-        const buttonText = String(ignoreButton.textContent || "").replace(/\s+/g, " ").trim();
-        const opacity = Number(getComputedStyle(container).opacity || 1);
-        return buttonText === "Ignore" && opacity >= 0.95;
-      },
-      ignoreTarget,
-      { timeout: 120000 }
-    );
+    const unignoreClick = await clickInlineAction(page, { action: "ignore", urlMatch: ignoreTarget });
+    if (!unignoreClick.ok) {
+      throw new Error(`Could not click inline Unignore for ${ignoreTarget}.`);
+    }
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Ignore" }, 1500);
+    await waitForInlineState(page, { action: "ignore", urlMatch: ignoreTarget, expectText: "Ignore" }, 120000);
 
     manifest = await waitForManifest(
       project.projectDir,
@@ -165,8 +156,12 @@ async function run() {
 
     const unignoreShot = await screenshot(page, "live-inline-unignore-cleared.png");
 
-    await clickInlineAction(page, { action: "ignore", urlMatch: ignorePersistTarget });
-    await waitForInlineState(page, { action: "ignore", urlMatch: ignorePersistTarget, expectText: "Ignoring…" }, 10000);
+    const persistIgnoreIndex = 4;
+    const persistIgnoreClick = await clickInlineAction(page, { action: "ignore", index: persistIgnoreIndex });
+    if (!persistIgnoreClick.ok) {
+      throw new Error(`Could not click inline Ignore for result index ${persistIgnoreIndex}.`);
+    }
+    await waitForInlineState(page, { action: "ignore", index: persistIgnoreIndex, expectText: "Unignore" }, 1500);
     await navigate(page, "https://trove.nla.gov.au/newspaper/article/85178391");
     manifest = await waitForManifest(
       project.projectDir,
@@ -183,6 +178,11 @@ async function run() {
     });
 
     await clickSidebarCollect(page);
+    await waitForSidebarActionFeedback(
+      page,
+      { selector: "#capture-collect", busyText: "Collecting", finalText: "Collected" },
+      1500
+    );
     await waitForSidebarCollectState(page, "Collected", 120000);
 
     manifest = await waitForManifest(
@@ -203,6 +203,11 @@ async function run() {
     });
 
     await page.click("#capture-ignore");
+    await waitForSidebarActionFeedback(
+      page,
+      { selector: "#capture-ignore", busyText: "Ignoring", finalText: "Unignore" },
+      1500
+    );
     await page.waitForFunction(() => {
       const button = document.querySelector("#capture-ignore");
       return Boolean(button && /Unignore/i.test(button.textContent || ""));

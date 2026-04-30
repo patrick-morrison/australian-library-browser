@@ -886,51 +886,41 @@
           if (preview) {
             preview.classList.toggle("is-loading", loadingAction === "preview");
             preview.disabled = loadingAction === "preview";
-            preview.textContent = loadingAction === "preview" ? loadingLabel || "Previewing…" : "Preview";
+            preview.textContent = "Preview";
           }
           if (collect) {
             collect.classList.remove("saved", "ignored");
             collect.classList.toggle("is-loading", loadingAction === "collect" || loadingAction === "uncollect");
-            collect.disabled = loadingAction === "collect" || loadingAction === "uncollect";
+            collect.disabled = false;
             if (effectiveStatus === "saved") {
               collect.classList.add("saved");
-              collect.textContent =
-                loadingAction === "collect"
-                  ? loadingLabel || "Collecting…"
-                  : loadingAction === "uncollect"
-                    ? loadingLabel || "Removing…"
-                    : "Collected";
-              collect.disabled = loadingAction === "uncollect";
+              collect.textContent = "Collected";
             } else {
-              collect.textContent =
-                loadingAction === "uncollect"
-                  ? loadingLabel || "Removing…"
-                  : loadingAction === "collect"
-                    ? loadingLabel || "Collecting…"
-                    : "Collect";
+              collect.textContent = "Collect";
             }
           }
           if (ignore) {
             ignore.classList.remove("ignored");
             ignore.classList.toggle("is-loading", loadingAction === "ignore" || loadingAction === "unignore");
-            ignore.disabled = loadingAction === "unignore";
             if (effectiveStatus === "saved") {
-              ignore.textContent = "Ignore";
-              ignore.hidden = true;
+              ignore.textContent = "Saved";
+              ignore.title = "Uncollect before ignoring this item.";
+              ignore.setAttribute("aria-label", "Item is collected. Uncollect before ignoring.");
+              ignore.hidden = false;
               ignore.disabled = true;
             } else if (effectiveStatus === "ignored") {
               ignore.classList.add("ignored");
-              ignore.textContent = loadingAction === "unignore" ? loadingLabel || "Unignoring…" : "Unignore";
+              ignore.textContent = "Unignore";
+              ignore.title = "";
+              ignore.setAttribute("aria-label", "Unignore");
               ignore.hidden = false;
-              ignore.disabled = loadingAction === "unignore";
+              ignore.disabled = false;
             } else {
-              ignore.textContent =
-                loadingAction === "unignore"
-                  ? loadingLabel || "Unignoring…"
-                  : loadingAction === "ignore"
-                    ? loadingLabel || "Ignoring…"
-                    : "Ignore";
+              ignore.textContent = "Ignore";
+              ignore.title = "";
+              ignore.setAttribute("aria-label", "Ignore");
               ignore.hidden = false;
+              ignore.disabled = false;
             }
           }
         };
@@ -956,66 +946,97 @@
               color: inherit !important;
             }
             .\${actionClass} {
-              display: inline-flex;
-              gap: 6px;
-              margin-left: 8px;
-              vertical-align: middle;
-              flex-wrap: wrap;
+              display: inline-flex !important;
+              align-items: center !important;
+              gap: 5px !important;
+              margin: 0 0 0 10px !important;
+              vertical-align: middle !important;
+              flex-wrap: wrap !important;
             }
             .\${actionClass} button {
-              border: 0;
-              border-radius: 999px;
-              padding: 4px 10px;
-              font: 600 12px/1.1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              cursor: pointer;
-              display: inline-flex;
-              align-items: center;
-              justify-content: center;
-              gap: 6px;
-              white-space: nowrap;
+              appearance: none !important;
+              position: relative !important;
+              border: 1px solid rgba(47, 107, 87, 0.12) !important;
+              border-radius: 999px !important;
+              padding: 0 12px !important;
+              min-block-size: 28px !important;
+              block-size: 28px !important;
+              font: 700 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+              cursor: pointer !important;
+              display: inline-grid !important;
+              place-items: center !important;
+              white-space: nowrap !important;
+              box-sizing: border-box !important;
+              letter-spacing: 0 !important;
+              text-align: center !important;
+              text-decoration: none !important;
+              text-transform: none !important;
+              box-shadow: none !important;
+              transform: none !important;
+              overflow: hidden !important;
             }
             .\${actionClass} .preview {
-              min-inline-size: 88px;
+              inline-size: 92px !important;
             }
             .\${actionClass} .collect {
-              min-inline-size: 104px;
+              inline-size: 108px !important;
             }
             .\${actionClass} .ignore {
-              min-inline-size: 96px;
+              inline-size: 92px !important;
+            }
+            .\${actionClass} button::before {
+              content: "";
+              position: absolute !important;
+              left: 9px !important;
+              top: 50% !important;
+              width: 10px !important;
+              height: 10px !important;
+              margin-top: -5px !important;
+              border-radius: 999px !important;
+              border: 2px solid currentColor !important;
+              border-right-color: transparent !important;
+              opacity: 0 !important;
+              pointer-events: none !important;
             }
             .\${actionClass} button.is-loading {
-              opacity: 0.92;
-              pointer-events: none;
+              opacity: 0.92 !important;
+              pointer-events: auto !important;
             }
             .\${actionClass} button.is-loading::before {
-              content: "";
-              width: 10px;
-              height: 10px;
-              border-radius: 999px;
-              border: 2px solid currentColor;
-              border-right-color: transparent;
-              animation: troveLibrarySpin 0.8s linear infinite;
+              opacity: 1 !important;
+              animation: troveLibrarySpin 0.8s linear infinite !important;
             }
             .\${actionClass} .preview {
-              background: rgba(45, 91, 74, 0.12);
-              color: #244b3c;
+              background: rgba(47, 107, 87, 0.1) !important;
+              color: #244b3c !important;
             }
             .\${actionClass} .collect {
-              background: rgba(157, 63, 38, 0.12);
-              color: #7f311c;
+              background: #286f88 !important;
+              border-color: rgba(29, 86, 107, 0.24) !important;
+              color: #ffffff !important;
+              box-shadow: 0 4px 10px rgba(40, 111, 136, 0.16) !important;
             }
             .\${actionClass} .ignore {
-              background: rgba(108, 98, 88, 0.12);
-              color: #6c6258;
+              background: rgba(31, 48, 61, 0.08) !important;
+              color: #53605b !important;
+            }
+            .\${actionClass} .ignore:disabled {
+              background: rgba(47, 107, 87, 0.06) !important;
+              border-color: rgba(47, 107, 87, 0.1) !important;
+              color: #7b867f !important;
             }
             .\${actionClass} .collect.saved {
-              background: #2f6b57;
-              color: #f6f3ee;
-              font-weight: 700;
+              background: #2f6b57 !important;
+              color: #f6f3ee !important;
+              font-weight: 700 !important;
+            }
+            .\${actionClass} button:disabled {
+              opacity: 0.58 !important;
+              cursor: default !important;
             }
             .\${actionClass} .collect.ignored {
-              background: rgba(231, 224, 216, 0.95);
-              color: #6c6258;
+              background: rgba(31, 48, 61, 0.08) !important;
+              color: #53605b !important;
             }
             #\${badgeId} {
               position: fixed;
@@ -1070,13 +1091,45 @@
           const currentState = window[stateKey] || (window[stateKey] = {});
           const loadingByUrl = { ...(currentState.loadingByUrl || {}) };
           if (normalizedUrl) {
-            loadingByUrl[normalizedUrl] = { action, label };
+            loadingByUrl[normalizedUrl] = { action, label, token: "" };
             currentState.loadingByUrl = loadingByUrl;
           }
           button.classList.add("is-loading");
           button.disabled = true;
           button.textContent = label;
           currentState.apply?.();
+        };
+        const applyInlineButtonChrome = (button, width) => {
+          if (!button) {
+            return;
+          }
+          const style = button.style;
+          const properties = {
+            appearance: "none",
+            position: "relative",
+            border: "1px solid rgba(47, 107, 87, 0.12)",
+            borderRadius: "999px",
+            padding: "0 12px",
+            minBlockSize: "28px",
+            blockSize: "28px",
+            inlineSize: width,
+            font: '700 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            cursor: "pointer",
+            display: "inline-grid",
+            placeItems: "center",
+            whiteSpace: "nowrap",
+            boxSizing: "border-box",
+            letterSpacing: "0",
+            textAlign: "center",
+            textDecoration: "none",
+            textTransform: "none",
+            boxShadow: "none",
+            transform: "none",
+            overflow: "hidden"
+          };
+          Object.entries(properties).forEach(([property, value]) => {
+            style.setProperty(property.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase()), value, "important");
+          });
         };
         const ensureInlineActions = (anchor, href, forcedStatus = "") => {
           const normalizedHref = normalize(href);
@@ -1096,10 +1149,11 @@
           preview.className = "preview";
           preview.setAttribute("data-trove-library-url", normalizedHref);
           preview.textContent = "Preview";
+          applyInlineButtonChrome(preview, "92px");
           preview.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            beginInlineLoading(href, "preview", preview, "Previewing…");
+            beginInlineLoading(href, "preview", preview, "Preview");
             emit({ action: "preview-link", url: href, label: anchor.textContent.trim() });
           });
           const collect = document.createElement("button");
@@ -1107,6 +1161,7 @@
           collect.className = "collect";
           collect.setAttribute("data-trove-library-url", normalizedHref);
           collect.textContent = "Collect";
+          applyInlineButtonChrome(collect, "108px");
           collect.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -1114,7 +1169,7 @@
               href,
               collect.classList.contains("saved") ? "uncollect" : "collect",
               collect,
-              collect.classList.contains("saved") ? "Removing…" : "Collecting…"
+              collect.classList.contains("saved") ? "Collect" : "Collected"
             );
             emit({ action: "collect-link", url: href, label: anchor.textContent.trim() });
           });
@@ -1123,6 +1178,7 @@
           ignore.className = "ignore";
           ignore.setAttribute("data-trove-library-url", normalizedHref);
           ignore.textContent = "Ignore";
+          applyInlineButtonChrome(ignore, "92px");
           ignore.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -1130,7 +1186,7 @@
               href,
               ignore.classList.contains("ignored") ? "unignore" : "ignore",
               ignore,
-              ignore.classList.contains("ignored") ? "Unignoring…" : "Ignoring…"
+              ignore.classList.contains("ignored") ? "Ignore" : "Unignore"
             );
             emit({ action: "ignore-link", url: href, label: anchor.textContent.trim() });
           });
@@ -1337,6 +1393,7 @@
         const active = ${JSON.stringify(Boolean(payload.active))};
         const action = ${JSON.stringify(payload.action || "")};
         const label = ${JSON.stringify(payload.label || "")};
+        const token = ${JSON.stringify(payload.token || "")};
         const urls = new Set((${JSON.stringify(payload.urls || [])} || []).map((value) => (${normalizeUrl.toString()})(value)).filter(Boolean));
         const stateKey = "__troveLibraryPageState";
         const actionClass = "trove-library-inline-actions";
@@ -1360,6 +1417,12 @@
             }, delay);
           });
         };
+        const canClear = (entry) => {
+          if (!entry || entry.action !== action) {
+            return false;
+          }
+          return !token || !entry.token || entry.token === token;
+        };
         const loadingByUrl = { ...(pageState.loadingByUrl || {}) };
         const clearedMatchKeys = new Set();
         urls.forEach((url) => {
@@ -1367,15 +1430,17 @@
         });
         urls.forEach((url) => {
           if (active) {
-            loadingByUrl[url] = { action, label };
+            loadingByUrl[url] = { action, label, token };
           } else {
-            delete loadingByUrl[url];
+            if (!loadingByUrl[url] || canClear(loadingByUrl[url])) {
+              delete loadingByUrl[url];
+            }
           }
         });
         if (!active) {
           Object.keys(loadingByUrl).forEach((entryUrl) => {
             const entryMatchKeys = getMatchKeys(entryUrl);
-            if (entryMatchKeys.some((key) => clearedMatchKeys.has(key))) {
+            if (canClear(loadingByUrl[entryUrl]) && entryMatchKeys.some((key) => clearedMatchKeys.has(key))) {
               delete loadingByUrl[entryUrl];
             }
           });

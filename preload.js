@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("troveApi", {
   chooseProjectFolder: () => ipcRenderer.invoke("dialog:choose-project-folder"),
   openPath: (targetPath) => ipcRenderer.invoke("shell:open-path", targetPath),
   readTextFile: (targetPath) => ipcRenderer.invoke("files:read-text", targetPath),
+  readFileBytes: (targetPath) => ipcRenderer.invoke("files:read-bytes", targetPath),
   copyText: (value) => ipcRenderer.invoke("clipboard:write-text", value),
   notifyRendererReady: () => ipcRenderer.send("renderer:ready"),
   onSaveProgress: (callback) => {

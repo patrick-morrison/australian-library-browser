@@ -1,6 +1,7 @@
 node_modules/
 .DS_Store
 *.trovelibrary/
+krantz/
 tmp/
 coverage/
 playwright-report/
@@ -10,3 +11,4 @@ button-width-proof-*/
 preview-drift-debug-*/
 preview-scope-debug-*/
 profile-flow-*/
+rapid-search-profile-*/

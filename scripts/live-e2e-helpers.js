@@ -78,41 +78,29 @@ async function navigate(page, url) {
 async function waitForInlineActions(page, minCount = 1, timeout = 30000) {
   console.log("[live] waiting for inline actions");
   await page.waitForSelector("#webview-stack webview", { timeout });
-  await page.waitForFunction(
-    async (requiredCount) => {
-      const webview = document.querySelector("#webview-stack webview");
-      if (!webview) {
-        return false;
-      }
-      try {
-        const count = await webview.executeJavaScript(
-          `(() => document.querySelectorAll(".trove-library-inline-actions").length)()`,
-          true
-        );
-        return Number(count || 0) >= requiredCount;
-      } catch {
-        return false;
-      }
-    },
-    minCount,
-    { timeout }
-  );
   let bestCount = 0;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
     const currentCount = await page.evaluate(async () => {
       const webview = document.querySelector("#webview-stack webview");
+      if (!webview) {
+        return 0;
+      }
       return webview.executeJavaScript(
         `(() => document.querySelectorAll(".trove-library-inline-actions").length)()`,
         true
-      );
+      ).catch(() => 0);
     });
     bestCount = Math.max(bestCount, Number(currentCount || 0));
     if (bestCount >= minCount) {
       break;
     }
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(250);
   }
-  return Math.max(bestCount, minCount);
+  if (bestCount < minCount) {
+    throw new Error(`Expected at least ${minCount} inline action groups, found ${bestCount}.`);
+  }
+  return bestCount;
 }
 
 async function webviewEval(page, expression, arg) {
@@ -302,6 +290,37 @@ async function clickSidebarCollect(page) {
   await page.click("#capture-collect");
 }
 
+async function waitForSidebarActionFeedback(
+  page,
+  { selector, busyText, finalText = "", expectQueue = true },
+  timeout = 1500
+) {
+  await page.waitForFunction(
+    ({ buttonSelector, busyNeedle, finalNeedle, shouldExpectQueue }) => {
+      const button = document.querySelector(buttonSelector);
+      if (!(button instanceof HTMLButtonElement)) {
+        return false;
+      }
+      const text = String(button.textContent || "").replace(/\s+/g, " ").trim();
+      const isBusy = button.getAttribute("aria-busy") === "true" || button.classList.contains("is-loading");
+      const hasBusyText = busyNeedle ? text.includes(busyNeedle) : false;
+      const hasFinalText = finalNeedle ? text.includes(finalNeedle) : false;
+      const queueVisible = !document.querySelector("#queue-tray")?.hasAttribute("hidden");
+      if (isBusy && hasBusyText && (!shouldExpectQueue || queueVisible)) {
+        return true;
+      }
+      return Boolean(hasFinalText);
+    },
+    {
+      buttonSelector: selector,
+      busyNeedle: busyText,
+      finalNeedle: finalText,
+      shouldExpectQueue: expectQueue
+    },
+    { timeout }
+  );
+}
+
 async function waitForSidebarCollectState(page, expectedText, timeout = 90000) {
   await page.waitForFunction(
     (text) => {
@@ -355,6 +374,7 @@ module.exports = {
   waitForInlineState,
   waitForPreview,
   clickSidebarCollect,
+  waitForSidebarActionFeedback,
   waitForSidebarCollectState,
   confirmDialog,
   expectManageSummary,

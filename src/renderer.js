@@ -14,7 +14,7 @@ const state = {
   mode: "collect",
   manageFilter: "saved",
   manageQuery: "",
-  manageLayout: "cards",
+  manageLayout: "compact",
   manageExpandedKey: "",
   debugOpen: false,
   captureRequestId: 0,
@@ -24,9 +24,13 @@ const state = {
   saveProgress: null,
   actionQueue: [],
   actionQueueRunning: false,
+  actionQueueTimer: null,
   currentQueueJob: null,
+  queueTrayVisible: false,
+  queueTrayRevealTimer: null,
   queuedActionIds: new Set(),
   actionNonce: 0,
+  perfEvents: [],
   previewActionId: "",
   previewIntent: null,
   linkDialogSourceId: "trove",
@@ -121,10 +125,11 @@ const elements = {
   imageLightboxImg: document.getElementById("image-lightbox-img"),
   imageLightboxCaption: document.getElementById("image-lightbox-caption"),
   pluginSeedUrls: document.getElementById("plugin-seed-urls"),
-  pluginCopyPrompt: document.getElementById("plugin-copy-prompt"),
-  pluginCopyProbeCommand: document.getElementById("plugin-copy-probe-command"),
-  pluginPromptOutput: document.getElementById("plugin-prompt-output"),
-  pluginStatus: document.getElementById("plugin-status"),
+  pluginDropZone: document.getElementById("plugin-drop-zone"),
+  pluginUrlAnalysis: document.getElementById("plugin-url-analysis"),
+  pluginOpenSelected: document.getElementById("plugin-open-selected"),
+  pluginClearIntake: document.getElementById("plugin-clear-intake"),
+  settingsOpenDebug: document.getElementById("settings-open-debug"),
   troveLinkExtractorStatus: document.getElementById("trove-link-extractor-status"),
   troveLinkDialog: document.getElementById("trove-link-dialog"),
   troveLinkDialogBackdrop: document.getElementById("trove-link-dialog-backdrop"),
@@ -142,6 +147,7 @@ const elements = {
   debugSavePage: document.getElementById("debug-save-page"),
   debugSaveItem: document.getElementById("debug-save-item"),
   debugSavePreview: document.getElementById("debug-save-preview"),
+  debugPerfSnapshot: document.getElementById("debug-perf-snapshot"),
   debugForm: document.getElementById("debug-form"),
   debugCommand: document.getElementById("debug-command"),
   debugOutput: document.getElementById("debug-output"),
@@ -175,9 +181,16 @@ const pageFindState = {
 const backgroundFetchPendingCache = new Map();
 const backgroundFetchResultCache = new Map();
 const previewMarkdownCache = new Map();
+const pageLoadingStartTimes = new Map();
 const BACKGROUND_FETCH_MAX_ENTRIES = 400;
 const PREVIEW_MARKDOWN_MAX_ENTRIES = 400;
+const QUEUE_TRAY_REVEAL_DELAY_MS = 650;
+const PREVIEW_CLICK_DEBOUNCE_MS = 80;
+const PREVIEW_FETCH_TIMEOUT_MS = 18000;
 let webviewResizeObserver = null;
+let previewClickTimer = null;
+let pendingPreviewRequest = null;
+let activePreviewLoading = null;
 
 function escapeHtml(value) {
   return String(value || "")
@@ -286,6 +299,18 @@ function closeProjectDialog() {
 }
 
 function getSourceLinkDialogConfig(sourceId = state.linkDialogSourceId) {
+  if (sourceId === "omni") {
+    return {
+      id: "omni",
+      label: "Supported",
+      intro: "Supported collection links were pulled from your notes. Open one link, every link, or only links that are not already collected or ignored.",
+      placeholder: "Paste research notes here",
+      emptyText: "Paste text to preview supported collection links.",
+      extractorHint: "Looks for installed-source collection links only.",
+      extractUrls: extractSupportedImportUrls,
+      describeUrl: describeSupportedImportUrl
+    };
+  }
   if (sourceId === "slwa") {
     return {
       id: "slwa",
@@ -412,15 +437,49 @@ function describeSlwaLinkUrl(url) {
   }
 }
 
+function getPluginForUrl(url) {
+  return state.plugins.find((plugin) => pluginMatchesUrl(plugin, url)) || null;
+}
+
+function describeSupportedImportUrl(url) {
+  const plugin = getPluginForUrl(url);
+  if (plugin?.id === "slwa") {
+    return describeSlwaLinkUrl(url);
+  }
+  if (plugin?.id === "trove") {
+    return describeTroveLinkUrl(url);
+  }
+  try {
+    const parsed = new URL(url);
+    return {
+      kind: plugin?.label || "Supported",
+      summary: parsed.pathname.replace(/^\//, "") || parsed.hostname,
+      detail: parsed.hostname.replace(/^www\./i, "")
+    };
+  } catch {
+    return {
+      kind: plugin?.label || "Supported",
+      summary: url,
+      detail: url
+    };
+  }
+}
+
+function getSourceIdForUrl(url, fallback = state.linkDialogSourceId) {
+  const plugin = getPluginForUrl(url);
+  return plugin?.id || fallback || "trove";
+}
+
 function getLinkDialogItemStatus(url, project = getActiveProject(), sourceId = state.linkDialogSourceId) {
   if (!project || !url) {
     return "";
   }
-  const sourceLabel = sourceId === "slwa" ? "SLWA" : "Trove";
+  const effectiveSourceId = sourceId === "omni" ? getSourceIdForUrl(url, sourceId) : sourceId;
+  const sourceLabel = getPluginForUrl(url)?.label || (effectiveSourceId === "slwa" ? "SLWA" : "Trove");
   return getEffectiveItemStatus(project, {
     url: ensureUrl(url),
     aliases: [ensureUrl(url)],
-    source: sourceId,
+    source: effectiveSourceId,
     sourceLabel
   });
 }
@@ -453,9 +512,14 @@ function renderTroveLinkDialogPreview() {
   elements.troveLinkDialogOpen.disabled = !urls.length;
   if (elements.troveLinkDialogOpenUnresolved) {
     elements.troveLinkDialogOpenUnresolved.disabled = !unresolvedUrls.length;
+    elements.troveLinkDialogOpenUnresolved.textContent =
+      config.id === "omni" ? "Open Not Yet Handled" : "Open Unresolved";
+  }
+  if (elements.troveLinkDialogOpen) {
+    elements.troveLinkDialogOpen.textContent = config.id === "omni" ? "Open All" : "Open Tabs";
   }
   elements.troveLinkDialogStatus.textContent = urls.length
-    ? `Found ${urls.length} ${config.label} link${urls.length === 1 ? "" : "s"}${project ? ` · ${unresolvedUrls.length} unresolved` : ""}.`
+    ? `Found ${urls.length} ${config.label.toLowerCase()} link${urls.length === 1 ? "" : "s"}${project ? ` · ${unresolvedUrls.length} not collected or ignored` : ""}.`
     : `No ${config.label} links found yet.`;
   if (elements.troveLinkExtractorStatus) {
     elements.troveLinkExtractorStatus.textContent = urls.length
@@ -479,13 +543,14 @@ function renderTroveLinkDialogPreview() {
           ? '<span class="trove-link-preview-status is-saved">Collected</span>'
           : status === "ignored"
             ? '<span class="trove-link-preview-status is-ignored">Ignored</span>'
-            : "";
+            : '<span class="trove-link-preview-status">Not collected/ignored</span>';
       return `
         <div class="trove-link-preview-item">
           <div class="trove-link-preview-head">
             <span class="trove-link-preview-index">Link ${index + 1}</span>
             <span class="trove-link-preview-kind">${escapeHtml(meta.kind)}</span>
             ${statusBadge}
+            <button type="button" class="trove-link-preview-open" data-url="${escapeHtml(url)}">Open</button>
           </div>
           <strong class="trove-link-preview-summary">${escapeHtml(meta.summary)}</strong>
           <span class="trove-link-preview-url">${escapeHtml(meta.detail)}</span>
@@ -907,6 +972,163 @@ function formatSaveProgressLabel(progress) {
   return `Collecting image ${Math.min(current, total)}/${total}`;
 }
 
+function nowMs() {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function formatDuration(ms) {
+  const value = Math.max(0, Number(ms) || 0);
+  if (value < 1000) {
+    return `${Math.round(value)}ms`;
+  }
+  return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}s`;
+}
+
+function recordPerfEvent(name, fields = {}) {
+  const event = {
+    at: new Date().toISOString(),
+    t: Math.round(nowMs()),
+    name,
+    ...fields
+  };
+  state.perfEvents.push(event);
+  if (state.perfEvents.length > 160) {
+    state.perfEvents.splice(0, state.perfEvents.length - 160);
+  }
+  return event;
+}
+
+function describeQueueState() {
+  const now = Date.now();
+  return {
+    running: state.actionQueueRunning,
+    waiting: state.actionQueue.length,
+    current: state.currentQueueJob
+      ? {
+          id: state.currentQueueJob.id,
+          action: state.currentQueueJob.action,
+          source: state.currentQueueJob.source,
+          title: summarizeQueueTarget(state.currentQueueJob),
+          activeForMs: now - (state.currentQueueJob.startedAt || state.currentQueueJob.queuedAt || now),
+          queuedForMs: now - (state.currentQueueJob.queuedAt || now)
+        }
+      : null,
+    waitingJobs: state.actionQueue.map((job) => ({
+      id: job.id,
+      action: job.action,
+      source: job.source,
+      title: summarizeQueueTarget(job),
+      queuedForMs: now - (job.queuedAt || now)
+    }))
+  };
+}
+
+function buildPerfSnapshotText() {
+  const activeTab = getActiveTab();
+  const displayedItem = getDisplayedItem();
+  return JSON.stringify(
+    {
+      capturedAt: new Date().toISOString(),
+      mode: state.mode,
+      activeProjectPath: state.activeProjectPath,
+      activeTab: activeTab
+        ? {
+            id: activeTab.id,
+            title: activeTab.title,
+            url: activeTab.url,
+            didDomReady: activeTab.didDomReady
+          }
+        : null,
+      capture: {
+        requestId: state.captureRequestId,
+        busy: state.captureBusy,
+        saveProgress: state.saveProgress,
+        previewActionId: state.previewActionId,
+        displayedItem: displayedItem
+          ? {
+              key: displayedItem.key,
+              title: displayedItem.title,
+              source: displayedItem.source,
+              type: displayedItem.type,
+              url: displayedItem.url
+            }
+          : null
+      },
+      queue: describeQueueState(),
+      cache: {
+        fetchedItems: backgroundFetchResultCache.size,
+        pendingFetches: backgroundFetchPendingCache.size,
+        previewMarkdown: previewMarkdownCache.size
+      },
+      recentEvents: state.perfEvents.slice(-30)
+    },
+    null,
+    2
+  );
+}
+
+function getAppHealthIssues(snapshot = JSON.parse(buildPerfSnapshotText())) {
+  const issues = [];
+  const captureBusy = snapshot.capture?.busy;
+  const queue = snapshot.queue || {};
+  const hasQueueWork = Boolean(queue.current) || Number(queue.waiting || 0) > 0;
+  if (captureBusy && !hasQueueWork && captureBusy.action !== "preview") {
+    issues.push("Capture pane is busy but no queued action is running or waiting.");
+  }
+  if (snapshot.capture?.saveProgress && !hasQueueWork) {
+    issues.push("Save progress is visible without active queue work.");
+  }
+  if (
+    queue.current &&
+    queue.current.source !== "inline" &&
+    !captureBusy &&
+    ["collect", "ignore", "uncollect", "unignore"].includes(queue.current.action)
+  ) {
+    issues.push("Queue is running an item action without capture busy state.");
+  }
+  if (queue.current?.activeForMs > 120000) {
+    issues.push(`Queue action has been active for ${formatDuration(queue.current.activeForMs)}.`);
+  }
+  if (Number(queue.waiting || 0) > 0 && !queue.running && !queue.current) {
+    issues.push("Queued work is waiting but the processor is not running.");
+  }
+  if (hasQueueWork && state.queueTrayVisible && elements.queueTray?.hidden) {
+    issues.push("Queued work is active but the queue tray is hidden.");
+  }
+  return issues;
+}
+
+function getLayoutOverflowIssues() {
+  const selectors = [
+    ".library-panel",
+    ".project-details",
+    ".project-card",
+    ".saved-search-item",
+    ".manage-toolbar",
+    ".manage-toolbar-actions",
+    ".manage-table",
+    ".manage-row-toggle",
+    ".capture-body",
+    ".capture-markdown"
+  ];
+  const issues = [];
+  document.querySelectorAll(selectors.join(",")).forEach((node) => {
+    if (!(node instanceof HTMLElement) || node.offsetParent === null) {
+      return;
+    }
+    const horizontalOverflow = node.scrollWidth - node.clientWidth;
+    if (horizontalOverflow > 1) {
+      issues.push({
+        selector: selectors.find((selector) => node.matches(selector)) || node.tagName.toLowerCase(),
+        text: String(node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 140),
+        overflowX: Math.round(horizontalOverflow),
+        width: Math.round(node.clientWidth)
+      });
+    }
+  });
+  return issues;
+}
+
 function summarizeQueueTarget(job) {
   const title = String(job?.item?.title || "").trim();
   if (title) {
@@ -927,7 +1149,8 @@ function summarizeQueueTarget(job) {
 function renderQueueTray() {
   const hasActiveQueueWork = Boolean(state.currentQueueJob) || Boolean(state.saveProgress);
   const waitingCount = state.actionQueue.length;
-  const shouldShow = state.mode === "collect" && (hasActiveQueueWork || waitingCount > 0);
+  const hasQueueWork = hasActiveQueueWork || waitingCount > 0;
+  const shouldShow = hasQueueWork && state.queueTrayVisible;
   if (!elements.queueTray) {
     return;
   }
@@ -951,6 +1174,8 @@ function renderQueueTray() {
   const targetLabel = summarizeQueueTarget(job);
   const progressLabel = state.saveProgress ? formatSaveProgressLabel(state.saveProgress) : "";
   const queueCount = (job ? 1 : 0) + waitingCount;
+  const jobElapsed = job?.startedAt ? formatDuration(Date.now() - job.startedAt) : "";
+  const oldestWait = waitingCount ? formatDuration(Date.now() - (state.actionQueue[0]?.queuedAt || Date.now())) : "";
 
   if (elements.queueTrayCount) {
     elements.queueTrayCount.textContent = String(queueCount);
@@ -967,8 +1192,11 @@ function renderQueueTray() {
   if (progressLabel) {
     metaParts.push(progressLabel);
   }
+  if (jobElapsed) {
+    metaParts.push(`${jobElapsed} active`);
+  }
   if (waitingCount > 0) {
-    metaParts.push(`${waitingCount} waiting`);
+    metaParts.push(`${waitingCount} waiting${oldestWait ? ` · oldest ${oldestWait}` : ""}`);
   }
   if (!metaParts.length && job?.source) {
     metaParts.push(job.source === "inline" ? "Queued from page" : "Queued from preview");
@@ -976,9 +1204,65 @@ function renderQueueTray() {
   elements.queueTrayMeta.textContent = metaParts.join(" · ");
 }
 
+function hasQueueWork() {
+  return Boolean(state.currentQueueJob) || Boolean(state.saveProgress) || state.actionQueue.length > 0;
+}
+
+function clearQueueTrayRevealTimer() {
+  if (!state.queueTrayRevealTimer) {
+    return;
+  }
+  clearTimeout(state.queueTrayRevealTimer);
+  state.queueTrayRevealTimer = null;
+}
+
+function scheduleQueueTrayReveal() {
+  if (!elements.queueTray) {
+    return;
+  }
+  if (!hasQueueWork()) {
+    clearQueueTrayRevealTimer();
+    state.queueTrayVisible = false;
+    state.queueTrayOpen = false;
+    renderQueueTray();
+    return;
+  }
+  if (state.queueTrayVisible || state.queueTrayRevealTimer) {
+    renderQueueTray();
+    return;
+  }
+  if (state.actionQueue.length > 1) {
+    state.queueTrayVisible = true;
+    renderQueueTray();
+    return;
+  }
+  state.queueTrayRevealTimer = setTimeout(() => {
+    state.queueTrayRevealTimer = null;
+    if (!hasQueueWork()) {
+      state.queueTrayVisible = false;
+      state.queueTrayOpen = false;
+      renderQueueTray();
+      return;
+    }
+    state.queueTrayVisible = true;
+    renderQueueTray();
+  }, QUEUE_TRAY_REVEAL_DELAY_MS);
+  renderQueueTray();
+}
+
 function setQueueTrayOpen(nextOpen) {
   state.queueTrayOpen = Boolean(nextOpen);
   renderQueueTray();
+}
+
+function scheduleActionQueueProcessing() {
+  if (state.actionQueueTimer || state.actionQueueRunning) {
+    return;
+  }
+  state.actionQueueTimer = setTimeout(() => {
+    state.actionQueueTimer = null;
+    void processActionQueue();
+  }, 0);
 }
 
 function setButtonLoading(button, isLoading, label) {
@@ -1034,6 +1318,25 @@ function getCachedFetchedItem(url, mode = "full") {
   }
   setSessionCacheEntry(backgroundFetchResultCache, cacheKey, cached, BACKGROUND_FETCH_MAX_ENTRIES);
   return cloneItemSnapshot(cached.item);
+}
+
+function withFetchTimeout(promise, timeoutMs) {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return promise;
+  }
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`Preview timed out after ${timeoutMs}ms.`);
+      error.code = "PREVIEW_TIMEOUT";
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
 }
 
 function cacheFetchedItem(url, mode, item) {
@@ -1096,15 +1399,6 @@ function setCaptureBusy(action, active, item = getDisplayedItem(), progressLabel
   elements.captureProgress.hidden = !progressLabel;
   if (action === "preview") {
     return;
-  }
-  if (action === "collect" || action === "uncollect") {
-    setButtonLoading(elements.captureCollect, true, progressLabel || `${describeBusyAction(action)}…`);
-    elements.captureIgnore.disabled = true;
-    return;
-  }
-  if (action === "ignore" || action === "unignore") {
-    setButtonLoading(elements.captureIgnore, true, `${describeBusyAction(action)}…`);
-    elements.captureCollect.disabled = true;
   }
 }
 
@@ -1237,6 +1531,15 @@ function pruneQueuedActionsForTarget(projectPath, target, incomingAction) {
   return removedAny;
 }
 
+function hasSupersedingQueuedAction(projectPath, target) {
+  if (!projectPath || !target) {
+    return false;
+  }
+  return state.actionQueue.some(
+    (job) => job.projectPath === projectPath && queuedTargetsReferToSameRecord(job.item, target)
+  );
+}
+
 function shouldReflectQueuedActionInCapture(target, options = {}) {
   return options.source === "sidebar";
 }
@@ -1262,6 +1565,22 @@ function clearPreviewIntent(token = "") {
 
 function interruptPreviewWork() {
   const previewToken = state.previewActionId || state.captureBusy?.token || "";
+  if (previewClickTimer) {
+    clearTimeout(previewClickTimer);
+    previewClickTimer = null;
+  }
+  pendingPreviewRequest = null;
+  if (activePreviewLoading) {
+    void applyImmediatePageLoading(
+      activePreviewLoading.item,
+      "preview",
+      false,
+      "",
+      activePreviewLoading.context,
+      activePreviewLoading.token
+    );
+    activePreviewLoading = null;
+  }
   state.captureRequestId += 1;
   state.previewActionId = "";
   clearPreviewIntent(previewToken);
@@ -1282,6 +1601,7 @@ function hasPendingLinkPreviewForTab(tab = getActiveTab()) {
 }
 
 function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
+  const clickedAt = nowMs();
   const item = typeof itemOrUrl === "string" ? null : itemOrUrl;
   const url = typeof itemOrUrl === "string" ? itemOrUrl : itemOrUrl?.url || "";
   const target = buildQueuedActionTarget(item, url);
@@ -1298,12 +1618,25 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
   );
   const currentJobMatchesAction = currentJobMatchesTarget && state.currentQueueJob.action === action;
   const busyLabel = `${describeBusyAction(action)}…`;
-  if (shouldReflectQueuedActionInCapture(target, options)) {
-    setCaptureBusy(action, true, target, busyLabel, currentJobMatchesAction ? state.currentQueueJob?.id || "" : "");
-  }
-  void applyImmediatePageLoading(target, action, true, busyLabel, options.context || getCaptureContext());
+  const project = getProjectByPath(projectPath);
+  const currentStatus = project ? getEffectiveItemStatus(project, target) : "";
+  const desiredStatus = getStatusAfterAction(action);
+  const actionContext = options.context || getCaptureContext();
+  const shouldReflectCapture = shouldReflectQueuedActionInCapture(target, options);
+  void applyImmediatePageLoading(target, action, true, busyLabel, actionContext);
 
   if (currentJobMatchesAction) {
+    if (shouldReflectCapture) {
+      setCaptureBusy(action, true, target, busyLabel, state.currentQueueJob?.id || "");
+    }
+    if (shouldReflectCapture && isCaptureContextCurrent(actionContext) && queuedTargetsReferToSameRecord(getDisplayedItem(), target)) {
+      setPreviewStatusOverride(desiredStatus, projectPath);
+      renderCapturePane(getDisplayedItem() || target, getDisplayedMarkdown(), {
+        origin: previewState.origin,
+        forcedStatus: desiredStatus
+      });
+    }
+    void applyImmediatePageFeedback(target, desiredStatus, actionContext);
     renderQueueTray();
     return true;
   }
@@ -1313,14 +1646,19 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
     return true;
   }
 
-  const project = getProjectByPath(projectPath);
-  const currentStatus = project ? getEffectiveItemStatus(project, target) : "";
-  const desiredStatus = getStatusAfterAction(action);
+  if (shouldReflectCapture && isCaptureContextCurrent(actionContext) && queuedTargetsReferToSameRecord(getDisplayedItem(), target)) {
+    setPreviewStatusOverride(desiredStatus, projectPath);
+    renderCapturePane(getDisplayedItem() || target, getDisplayedMarkdown(), {
+      origin: previewState.origin,
+      forcedStatus: desiredStatus
+    });
+  }
+  void applyImmediatePageFeedback(target, desiredStatus, actionContext);
   if (!currentJobMatchesTarget && removedQueuedConflict && currentStatus === desiredStatus) {
-    if (shouldReflectQueuedActionInCapture(target, options)) {
+    if (shouldReflectCapture) {
       setCaptureBusy("", false, null, "", "");
     }
-    void applyImmediatePageLoading(target, action, false, "", options.context || getCaptureContext());
+    void applyImmediatePageLoading(target, action, false, "", actionContext);
     renderQueueTray();
     return true;
   }
@@ -1332,18 +1670,26 @@ function queueProjectAction(action, projectPath, itemOrUrl, options = {}) {
     projectPath,
     item: target,
     url: target.url,
-    context: options.context || getCaptureContext(),
+    context: actionContext,
     queuedAt: Date.now(),
+    queuedAtMs: clickedAt,
     source: options.source || "",
     label: options.label || ""
   };
   state.queuedActionIds.add(actionKey);
   state.actionQueue.push(job);
-  renderQueueTray();
+  recordPerfEvent("queue.action.enqueued", {
+    id: job.id,
+    action,
+    source: job.source,
+    target: summarizeQueueTarget(job),
+    waiting: state.actionQueue.length
+  });
+  scheduleQueueTrayReveal();
   if (shouldReflectQueuedActionInCapture(target, options)) {
     setCaptureBusy(action, true, target, busyLabel, job.id);
   }
-  void processActionQueue();
+  scheduleActionQueueProcessing();
   return true;
 }
 
@@ -1407,7 +1753,16 @@ async function processActionQueue() {
         continue;
       }
       state.currentQueueJob = job;
-      renderQueueTray();
+      job.startedAt = Date.now();
+      job.startedAtMs = nowMs();
+      recordPerfEvent("queue.action.started", {
+        id: job.id,
+        action: job.action,
+        source: job.source,
+        queuedMs: Math.round(job.startedAtMs - (job.queuedAtMs || job.startedAtMs)),
+        waiting: state.actionQueue.length
+      });
+      scheduleQueueTrayReveal();
       try {
         const item = await resolveQueuedActionItem(job);
         if (job.action === "collect") {
@@ -1420,17 +1775,41 @@ async function processActionQueue() {
           await unignoreItem(item, job.projectPath, job.id, job.context);
         }
       } catch (error) {
+        recordPerfEvent("queue.action.failed", {
+          id: job.id,
+          action: job.action,
+          durationMs: Math.round(nowMs() - (job.startedAtMs || nowMs())),
+          message: error.message || String(error)
+        });
         setCaptureBusy("", false, null, "", job.id);
         void applyImmediatePageLoading(job.item, job.action, false, "", job.context);
         setMessage(error.message || `${describeBusyAction(job.action)} failed.`);
       } finally {
+        if (state.currentQueueJob === job) {
+          recordPerfEvent("queue.action.finished", {
+            id: job.id,
+            action: job.action,
+            durationMs: Math.round(nowMs() - (job.startedAtMs || nowMs())),
+            waiting: state.actionQueue.length
+          });
+        }
         state.queuedActionIds.delete(job.actionKey);
         state.currentQueueJob = null;
+        setCaptureBusy("", false, null, "", job.id);
+        const displayedItem = getDisplayedItem();
+        if (displayedItem) {
+          renderCapturePane(displayedItem, getDisplayedMarkdown(), { origin: previewState.origin });
+        }
         renderQueueTray();
       }
     }
   } finally {
     state.actionQueueRunning = false;
+    clearQueueTrayRevealTimer();
+    if (!hasQueueWork()) {
+      state.queueTrayVisible = false;
+      state.queueTrayOpen = false;
+    }
     renderQueueTray();
   }
 }
@@ -1885,19 +2264,26 @@ function renderCapturePane(item, markdown, options = {}) {
         item &&
         ((busy.key && item.key && busy.key === item.key) || (busy.url && item.url && busy.url === item.url))
     );
-  elements.captureIgnore.disabled = !project || status === "saved" || itemMatchesBusy;
-  elements.captureCollect.disabled = !project || itemMatchesBusy;
+  const ignoreBlockedBySaved = status === "saved";
+  elements.captureIgnore.disabled = !project || ignoreBlockedBySaved;
+  elements.captureCollect.disabled = !project;
   const attachments = getItemAttachments(item);
   const isImageSet = item.type === "image" && attachments.length > 1;
   const collectLabel = status === "saved" ? "Collected" : isImageSet ? `Collect All (${attachments.length})` : "Collect";
-  const ignoreLabel = status === "ignored" ? "Unignore" : "Ignore";
+  const ignoreLabel = ignoreBlockedBySaved ? "Saved" : status === "ignored" ? "Unignore" : "Ignore";
   elements.captureCollect.dataset.baseLabel = collectLabel;
   elements.captureIgnore.dataset.baseLabel = ignoreLabel;
   elements.captureCollect.textContent = collectLabel;
   elements.captureIgnore.textContent = ignoreLabel;
+  elements.captureIgnore.title = ignoreBlockedBySaved ? "Uncollect before ignoring this item." : "";
+  elements.captureIgnore.setAttribute(
+    "aria-label",
+    ignoreBlockedBySaved ? "Item is collected. Uncollect before ignoring." : ignoreLabel
+  );
   elements.captureCollect.classList.toggle("is-complete", status === "saved");
   elements.captureIgnore.classList.toggle("is-complete", status === "ignored");
   elements.captureIgnore.classList.toggle("is-ignored-state", status === "ignored");
+  elements.captureIgnore.classList.toggle("is-blocked-by-saved", ignoreBlockedBySaved);
   const progressMatchesItem =
     Boolean(
       progress &&
@@ -1905,16 +2291,8 @@ function renderCapturePane(item, markdown, options = {}) {
         ((progress.key && item.key && progress.key === item.key) || (progress.url && item.url && progress.url === item.url))
     );
   const progressLabel = progressMatchesItem ? formatSaveProgressLabel(progress) : "";
-  setButtonLoading(
-    elements.captureCollect,
-    Boolean(itemMatchesBusy && (busy.action === "collect" || busy.action === "uncollect")),
-    progressLabel || busy?.progressLabel || `${describeBusyAction(busy?.action)}…`
-  );
-  setButtonLoading(
-    elements.captureIgnore,
-    Boolean(itemMatchesBusy && (busy.action === "ignore" || busy.action === "unignore")),
-    `${describeBusyAction(busy?.action)}…`
-  );
+  setButtonLoading(elements.captureCollect, false);
+  setButtonLoading(elements.captureIgnore, false);
   elements.captureProgress.textContent = progressLabel;
   elements.captureProgress.hidden = !progressLabel;
   const showImage = item.type === "image" && attachments.length > 0;
@@ -1973,7 +2351,7 @@ async function applyImmediatePageFeedback(item, status, context = null) {
   await safeExecuteJavaScript(targetTab, script, true, null, { requireReady: false });
 }
 
-async function applyImmediatePageLoading(item, action, active, label = "", context = null) {
+async function applyImmediatePageLoading(item, action, active, label = "", context = null, token = "") {
   const targetTab = resolveActionContextTab(context);
   if (!item) {
     return;
@@ -1982,12 +2360,40 @@ async function applyImmediatePageLoading(item, action, active, label = "", conte
   if (!urls.length) {
     return;
   }
-  const script = sourceRegistry.buildImmediateLoadingScript({ action, active, label, urls });
+  const loadingKey = `${context?.tabId || targetTab?.id || "tab"}::${action || "action"}::${normalizeComparableUrl(urls[0] || "")}`;
+  if (active) {
+    pageLoadingStartTimes.set(loadingKey, nowMs());
+    recordPerfEvent("page.spinner.show", {
+      action,
+      source: context?.pageUrl ? "page" : "app",
+      url: urls[0] || "",
+      label,
+      token
+    });
+  }
+  const script = sourceRegistry.buildImmediateLoadingScript({ action, active, label, urls, token });
   await safeExecuteJavaScript(targetTab, script, true, null, { requireReady: false });
+  if (!active) {
+    const startedAt = pageLoadingStartTimes.get(loadingKey);
+    pageLoadingStartTimes.delete(loadingKey);
+    recordPerfEvent("page.spinner.hide", {
+      action,
+      url: urls[0] || "",
+      durationMs: startedAt ? Math.round(nowMs() - startedAt) : null
+    });
+  }
 }
 
 async function handleSaveProgress(progress) {
   state.saveProgress = progress || null;
+  if (progress?.phase) {
+    recordPerfEvent("collect.progress", {
+      phase: progress.phase,
+      title: progress.title || "",
+      current: progress.current || 0,
+      total: progress.total || 0
+    });
+  }
   renderQueueTray();
   const displayedItem = getDisplayedItem();
   if (displayedItem) {
@@ -2272,49 +2678,275 @@ async function openItemInApp(item) {
 }
 
 function getPluginSeedUrls() {
-  return String(elements.pluginSeedUrls?.value || "")
-    .split("\n")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  return extractSupportedImportUrls(elements.pluginSeedUrls?.value || "");
 }
 
-function buildPluginPrompt(urls) {
-  const seeds = urls.length ? urls.map((url) => `- ${url}`).join("\n") : "- https://example-library/search?q=wellington+dam";
-  return `Use the australian-library-browser repo to reverse engineer a new collection source integration.
-
-Source URLs:
-${seeds}
-
-Workflow:
-1. Run \`npm run probe:source -- "<url1>" "<url2>" ...\` on the seed URLs.
-2. Inspect the screenshots and DOM summaries from the probe output.
-3. Add fixture coverage for search/detail/media variants.
-4. Implement a source adapter and inline-result-link heuristics.
-5. Verify with \`npm run test:fixtures\`, \`npm run test:e2e\`, and fresh Electron screenshots.
-6. Keep the browser footprint minimal and the collect sidebar focused on preview + collect/ignore.
-
-Constraints:
-- Degrade cleanly when a page is unsupported.
-- Only add inline Preview/Collect controls to actual entry/result links.
-- Save text records as markdown and image records as image + markdown sidecar.
-- Preserve saved/ignored alias recognition.
-
-If the site blocks automated browsing, say so explicitly and identify the smallest missing input needed from me to finish the integration in one more round.`;
-}
-
-function buildPluginProbeCommand(urls) {
-  if (!urls.length) {
-    return 'npm run probe:source -- "https://example-library/search?q=wellington+dam"';
+function appendPluginIntakeText(text, label = "") {
+  const incoming = String(text || "").trim();
+  if (!incoming) {
+    return;
   }
-  return `npm run probe:source -- ${urls.map((url) => `"${url}"`).join(" ")}`;
+  const current = String(elements.pluginSeedUrls?.value || "").trim();
+  const heading = label ? `\n\n# ${label}\n` : "\n\n";
+  elements.pluginSeedUrls.value = `${current}${current ? heading : label ? `# ${label}\n` : ""}${incoming}`.trim();
+  renderPluginIntake();
+}
+
+function extractUrlsFromText(value) {
+  const decoded = String(value || "")
+    .replace(/&amp;/gi, "&")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "");
+  const matches = decoded.match(/https?:\/\/[^\s<>"'`)\]}]+/gi) || [];
+  return [
+    ...new Set(
+      matches
+        .map((url) => url.replace(/[.,;:!?]+$/g, "").replace(/&quot$/i, ""))
+        .map(ensureUrl)
+        .filter(Boolean)
+    )
+  ];
+}
+
+function getSupportedImportUrlPatterns() {
+  return [
+    /https?:\/\/trove\.nla\.gov\.au\/newspaper\/article\/\d+/i,
+    /https?:\/\/trove\.nla\.gov\.au\/work\/\d+/i,
+    /https?:\/\/encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i,
+    /https?:\/\/purl\.slwa\.wa\.gov\.au\/[a-z0-9_./-]+/i,
+    /https?:\/\/catalogue\.slwa\.wa\.gov\.au\/record=b\d+~S\d+/i,
+    /https?:\/\/museum\.wa\.gov\.au\/maritime-archaeology-db\/artefacts\/[^/?#]+/i
+  ];
+}
+
+function extractSupportedImportUrls(value) {
+  const patterns = getSupportedImportUrlPatterns();
+  return extractUrlsFromText(value).filter((url) => patterns.some((pattern) => pattern.test(url)));
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function bytesToLatinText(bytes) {
+  let output = "";
+  for (const byte of bytes) {
+    output += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : " ";
+  }
+  return output;
+}
+
+function bytesToUtf16Text(bytes) {
+  let output = "";
+  for (let index = 0; index + 1 < bytes.length; index += 2) {
+    const code = bytes[index] | (bytes[index + 1] << 8);
+    output += code >= 32 && code <= 0xffff ? String.fromCharCode(code) : " ";
+  }
+  return output;
+}
+
+async function inflateRawDeflate(bytes) {
+  if (typeof DecompressionStream !== "function") {
+    throw new Error("DOCX decompression is not available in this Electron runtime.");
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function extractTextFromZipXml(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const chunks = [];
+  let offset = 0;
+  while (offset + 30 < bytes.length) {
+    const signature = bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24);
+    if (signature !== 0x04034b50) {
+      offset += 1;
+      continue;
+    }
+    const flags = bytes[offset + 6] | (bytes[offset + 7] << 8);
+    const method = bytes[offset + 8] | (bytes[offset + 9] << 8);
+    const compressedSize =
+      bytes[offset + 18] | (bytes[offset + 19] << 8) | (bytes[offset + 20] << 16) | (bytes[offset + 21] << 24);
+    const fileNameLength = bytes[offset + 26] | (bytes[offset + 27] << 8);
+    const extraLength = bytes[offset + 28] | (bytes[offset + 29] << 8);
+    const fileNameStart = offset + 30;
+    const fileName = new TextDecoder().decode(bytes.slice(fileNameStart, fileNameStart + fileNameLength));
+    const dataStart = fileNameStart + fileNameLength + extraLength;
+    if (flags & 0x08 || compressedSize < 0 || dataStart + compressedSize > bytes.length) {
+      offset = dataStart + Math.max(0, compressedSize);
+      continue;
+    }
+    if (/\.(xml|rels)$/i.test(fileName)) {
+      const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+      try {
+        const contentBytes = method === 0 ? compressed : method === 8 ? await inflateRawDeflate(compressed) : null;
+        if (contentBytes) {
+          chunks.push(decodeXmlEntities(new TextDecoder().decode(contentBytes)));
+        }
+      } catch {
+        // Keep processing other zip entries.
+      }
+    }
+    offset = dataStart + compressedSize;
+  }
+  return chunks.join("\n");
+}
+
+async function extractTextFromDroppedFile(file) {
+  const name = String(file?.name || "dropped file");
+  const extension = name.split(".").pop()?.toLowerCase() || "";
+  const buffer = await file.arrayBuffer();
+  if (extension === "docx") {
+    return extractTextFromZipXml(buffer);
+  }
+  const bytes = new Uint8Array(buffer);
+  const latinText = bytesToLatinText(bytes);
+  if (extension === "pdf") {
+    return `${latinText}\n${bytesToUtf16Text(bytes)}`;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return latinText;
+  }
+}
+
+async function handlePluginDroppedFiles(files) {
+  const dropped = Array.from(files || []);
+  if (!dropped.length) {
+    return;
+  }
+  elements.pluginDropZone?.classList.add("is-loading");
+  try {
+    const summaries = [];
+    for (const file of dropped) {
+      const text = await extractTextFromDroppedFile(file);
+      const urls = extractSupportedImportUrls(text);
+      if (urls.length) {
+        appendPluginIntakeText(urls.join("\n"), file.name || "Dropped file");
+      }
+      summaries.push(`${file.name || "file"}: ${urls.length} URL${urls.length === 1 ? "" : "s"}`);
+    }
+    setMessage(`Imported ${summaries.join(" · ")}.`);
+    openImportTriageDialogFromNotes();
+  } catch (error) {
+    setMessage(error.message || "Could not read dropped file.");
+  } finally {
+    elements.pluginDropZone?.classList.remove("is-loading", "is-dragging");
+  }
+}
+
+function pluginMatchesUrl(plugin, url) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return plugin.domains.some((domain) => {
+      const normalizedDomain = String(domain || "").toLowerCase();
+      return hostname === normalizedDomain || hostname.endsWith(`.${normalizedDomain}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function classifyPluginSeedUrls(urls) {
+  const groups = state.plugins.map((plugin) => ({ plugin, urls: [] }));
+  for (const url of urls) {
+    const group = groups.find((entry) => pluginMatchesUrl(entry.plugin, url));
+    if (group) {
+      group.urls.push(url);
+    }
+  }
+  return {
+    groups: groups.filter((entry) => entry.urls.length),
+    unsupported: []
+  };
+}
+
+function renderPluginUrlAnalysis(urls) {
+  if (!elements.pluginUrlAnalysis) {
+    return;
+  }
+  if (!urls.length) {
+    elements.pluginUrlAnalysis.className = "plugin-url-analysis empty-state";
+    const rawCount = extractUrlsFromText(elements.pluginSeedUrls?.value || "").length;
+    elements.pluginUrlAnalysis.textContent = rawCount
+      ? `No supported collection links found. Ignored ${rawCount} unsupported URL${rawCount === 1 ? "" : "s"}.`
+      : "Paste or drop notes to find collection links.";
+    return;
+  }
+  const classified = classifyPluginSeedUrls(urls);
+  let itemIndex = 0;
+  const renderTriageItem = (url, options = {}) => {
+    itemIndex += 1;
+    const checked = options.checked === false ? "" : " checked";
+    const source = options.source || "New source";
+    const className = options.unsupported ? "plugin-triage-item is-unsupported" : "plugin-triage-item";
+    return `
+      <label class="${className}">
+        <input type="checkbox" class="plugin-triage-check" data-url="${escapeHtml(url)}"${checked}>
+        <span>
+          <strong>${escapeHtml(source)}</strong>
+          <small>${escapeHtml(url)}</small>
+        </span>
+      </label>
+    `;
+  };
+  const rows = [
+    ...classified.groups.map(
+      ({ plugin, urls: sourceUrls }) => `
+        <div class="plugin-url-analysis-group">
+          <div class="plugin-url-analysis-row">
+            <strong>${escapeHtml(plugin.label)}</strong>
+            <span>${sourceUrls.length} URL${sourceUrls.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="plugin-triage-list">
+            ${sourceUrls.map((url) => renderTriageItem(url, { source: plugin.label })).join("")}
+          </div>
+        </div>
+      `
+    )
+  ].filter(Boolean);
+  elements.pluginUrlAnalysis.className = "plugin-url-analysis";
+  elements.pluginUrlAnalysis.innerHTML = rows.join("");
+}
+
+function getSelectedPluginIntakeUrls() {
+  return Array.from(elements.pluginUrlAnalysis?.querySelectorAll(".plugin-triage-check:checked") || [])
+    .map((input) => input.getAttribute("data-url") || "")
+    .filter(Boolean);
 }
 
 function renderPluginIntake() {
   const urls = getPluginSeedUrls();
-  elements.pluginPromptOutput.textContent = buildPluginPrompt(urls);
-  elements.pluginStatus.textContent = urls.length
-    ? `Ready to probe ${urls.length} URL${urls.length === 1 ? "" : "s"} and generate a new-source integration prompt.`
-    : "Paste URLs to generate a reusable Codex/Claude integration prompt.";
+  renderPluginUrlAnalysis(urls);
+  if (elements.pluginOpenSelected) {
+    elements.pluginOpenSelected.disabled = !getSelectedPluginIntakeUrls().length;
+  }
+  if (elements.pluginClearIntake) {
+    elements.pluginClearIntake.disabled = !String(elements.pluginSeedUrls?.value || "").trim();
+  }
+}
+
+function openImportTriageDialogFromNotes(urlsOverride = null) {
+  const urls = Array.isArray(urlsOverride) ? urlsOverride : getPluginSeedUrls();
+  if (!urls.length) {
+    renderPluginIntake();
+    return;
+  }
+  state.linkDialogSourceId = "omni";
+  state.linkDialogUrls = urls;
+  if (elements.troveLinkDialogInput) {
+    elements.troveLinkDialogInput.value = elements.pluginSeedUrls?.value || urls.join("\n");
+  }
+  renderTroveLinkDialogPreview();
+  elements.troveLinkDialog.hidden = false;
+  queueMicrotask(() => elements.troveLinkDialogOpenUnresolved?.focus());
 }
 
 function renderMode() {
@@ -2329,7 +2961,17 @@ function renderMode() {
   renderQueueTray();
 }
 
+function resetManageDefaults() {
+  state.manageFilter = "saved";
+  state.manageLayout = "compact";
+  state.manageQuery = "";
+  state.manageExpandedKey = "";
+}
+
 function setMode(mode) {
+  if (mode === "manage") {
+    resetManageDefaults();
+  }
   state.mode = mode;
   closeProjectContextMenu();
   renderMode();
@@ -2401,6 +3043,50 @@ function safeCanGo(tab, direction) {
 function isIgnorableNavigationError(error) {
   const message = String(error?.message || error || "");
   return /ERR_ABORTED\s*\(-?3\)/i.test(message);
+}
+
+function getElectronNetErrorCode(error) {
+  const message = String(error?.message || error || "");
+  const match = message.match(/ERR_[A-Z_]+/i);
+  return match ? match[0].toUpperCase() : "";
+}
+
+function isTransientNetworkError(error) {
+  return /ERR_(NETWORK_CHANGED|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|NETWORK_IO_SUSPENDED|CONNECTION_(TIMED_OUT|RESET|ABORTED|CLOSED|REFUSED)|TIMED_OUT)/i.test(
+    String(error?.message || error || "")
+  );
+}
+
+function describeTransientNetworkError(error) {
+  const code = getElectronNetErrorCode(error);
+  if (code === "ERR_NETWORK_CHANGED") {
+    return "The network changed while reloading. Try refresh again once the connection settles.";
+  }
+  if (code === "ERR_INTERNET_DISCONNECTED") {
+    return "The internet connection dropped while reloading.";
+  }
+  if (code === "ERR_NAME_NOT_RESOLVED") {
+    return "The site could not be reached because DNS resolution failed.";
+  }
+  if (code === "ERR_ADDRESS_UNREACHABLE") {
+    return "The site could not be reached from the current network.";
+  }
+  if (code) {
+    return `The page could not be refreshed because the network is unavailable (${code}).`;
+  }
+  return "The page could not be refreshed because the network is unavailable.";
+}
+
+function buildTransientFetchFailure(url, error) {
+  const normalizedUrl = ensureUrl(url);
+  return {
+    supported: false,
+    url: normalizedUrl,
+    aliases: normalizedUrl ? [normalizedUrl] : [],
+    reason: describeTransientNetworkError(error),
+    transient: true,
+    errorCode: getElectronNetErrorCode(error)
+  };
 }
 
 async function navigateExistingTab(target, url) {
@@ -2720,14 +3406,18 @@ function scheduleTabRefresh(tab = getActiveTab(), options = {}) {
   }
   tab.refreshTimer = setTimeout(async () => {
     tab.refreshTimer = null;
-    if (tab.id !== state.activeTabId) {
-      return;
-    }
-    if (decorations) {
-      await applyProjectDecorations();
-    }
-    if (capture) {
-      await updateCaptureState();
+    try {
+      if (tab.id !== state.activeTabId) {
+        return;
+      }
+      if (decorations) {
+        await applyProjectDecorations();
+      }
+      if (capture) {
+        await updateCaptureState();
+      }
+    } catch (error) {
+      console.error("Scheduled tab refresh failed.", error);
     }
   }, delay);
 }
@@ -2780,58 +3470,109 @@ function dismissPageObstructions(tab) {
     (() => {
       try {
         const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
-        const buttonCandidates = [];
-        const overlayRoots = Array.from(
-          document.querySelectorAll('[role="dialog"], .modal, .dialog, .popup, [aria-modal="true"]')
-        );
-        const exactMatchers = [/don't show cultural advice/i, /dont show cultural advice/i, /^close$/i, /^dismiss$/i];
-        const fuzzyMatchers = [/close/i, /dismiss/i, /skip/i];
-        const collectButtons = (root) =>
-          Array.from(root.querySelectorAll('button, [role="button"], a')).filter((node) => {
-            const combined = [
-              node.textContent,
-              node.getAttribute("aria-label"),
-              node.getAttribute("title"),
-              node.className
-            ].join(" ");
-            return fuzzyMatchers.some((pattern) => pattern.test(combined));
-          });
-
-        for (const root of overlayRoots) {
-          buttonCandidates.push(...collectButtons(root));
-        }
-        if (!buttonCandidates.length) {
-          buttonCandidates.push(
-            ...Array.from(document.querySelectorAll('button, [role="button"], a')).filter((node) => {
+        const findDismissButton = () => {
+          const overlayRoots = Array.from(
+            document.querySelectorAll('#culturalModal, [role="dialog"], .modal, .dialog, .popup, [aria-modal="true"]')
+          );
+          const exactMatchers = [
+            /don't show cultural advice/i,
+            /dont show cultural advice/i,
+            /^[×x✕]$/i,
+            /^close$/i,
+            /^dismiss$/i,
+            /^continue$/i,
+            /^ok$/i
+          ];
+          const fuzzyMatchers = [/cultural advice/i, /close/i, /dismiss/i, /continue/i, /skip/i, /ok/i, /^[×x✕]$/i];
+          const candidates = [];
+          const collectButtons = (root) =>
+            Array.from(root.querySelectorAll('button, [role="button"], a, .close, [data-dismiss], [data-bs-dismiss]')).filter((node) => {
               const combined = [
                 node.textContent,
                 node.getAttribute("aria-label"),
                 node.getAttribute("title"),
+                node.getAttribute("data-dismiss"),
+                node.getAttribute("data-bs-dismiss"),
                 node.className
               ].join(" ");
-              return /don't show cultural advice|dont show cultural advice/i.test(combined);
-            })
-          );
-        }
+              return fuzzyMatchers.some((pattern) => pattern.test(combined));
+            });
 
-        const best =
-          buttonCandidates.find((node) => {
-            const value = normalize([
-              node.textContent,
-              node.getAttribute("aria-label"),
-              node.getAttribute("title")
-            ].join(" "));
-            return exactMatchers.some((pattern) => pattern.test(value));
-          }) ||
-          buttonCandidates[0];
-
-        if (best) {
-          try {
-            best.click();
-            return true;
-          } catch {
-            return false;
+          for (const root of overlayRoots) {
+            candidates.push(...collectButtons(root));
           }
+          if (!candidates.length) {
+            candidates.push(
+              ...Array.from(document.querySelectorAll('button, [role="button"], a, .close, [data-dismiss], [data-bs-dismiss]')).filter((node) => {
+                const combined = [
+                  node.textContent,
+                  node.getAttribute("aria-label"),
+                  node.getAttribute("title"),
+                  node.className
+                ].join(" ");
+                return /don't show cultural advice|dont show cultural advice|cultural advice/i.test(combined);
+              })
+            );
+          }
+          return (
+            candidates.find((node) => {
+              const value = normalize([
+                node.textContent,
+                node.getAttribute("aria-label"),
+                node.getAttribute("title")
+              ].join(" "));
+              return /don't show cultural advice|dont show cultural advice/i.test(value);
+            }) ||
+            candidates.find((node) => {
+              const value = normalize([
+                node.textContent,
+                node.getAttribute("aria-label"),
+                node.getAttribute("title")
+              ].join(" "));
+              return exactMatchers.some((pattern) => pattern.test(value));
+            }) ||
+            candidates[0] ||
+            null
+          );
+        };
+
+        const dismissOnce = () => {
+          const best = findDismissButton();
+          if (best) {
+            try {
+              best.click();
+              return true;
+            } catch {
+              return false;
+            }
+          }
+          try {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+          } catch {
+            // Ignore pages that do not accept synthetic keyboard events.
+          }
+          return false;
+        };
+
+        if (dismissOnce()) {
+          return true;
+        }
+        if (!window.__troveLibraryObstructionDismissTimer) {
+          let attempts = 0;
+          window.__troveLibraryObstructionDismissTimer = window.setInterval(() => {
+            attempts += 1;
+            try {
+              if (dismissOnce() || attempts >= 20) {
+                window.clearInterval(window.__troveLibraryObstructionDismissTimer);
+                window.__troveLibraryObstructionDismissTimer = null;
+              }
+            } catch {
+              if (attempts >= 20) {
+                window.clearInterval(window.__troveLibraryObstructionDismissTimer);
+                window.__troveLibraryObstructionDismissTimer = null;
+              }
+            }
+          }, 250);
         }
         return false;
       } catch {
@@ -2845,7 +3586,7 @@ function dismissPageObstructions(tab) {
       if (!tab.webview?.isConnected) {
         return;
       }
-      void safeExecuteJavaScript(tab, script, true, null);
+      void safeExecuteJavaScript(tab, script, true, null, { requireReady: false });
     }, delay);
   }
 }
@@ -2899,6 +3640,28 @@ function bindWebview(tab) {
         resetCapturePane("Loading page. The capture pane will update when the record or result preview is ready.", "Loading");
       }
     }
+  });
+
+  tab.webview.addEventListener("did-fail-load", (event) => {
+    if (event.isMainFrame === false || Number(event.errorCode) === -3) {
+      return;
+    }
+    tab.didDomReady = false;
+    updateNavigationButtons();
+    if (tab.id !== state.activeTabId) {
+      return;
+    }
+    const failureReason = isTransientNetworkError(event.errorDescription || event.errorCode)
+      ? describeTransientNetworkError(event.errorDescription || event.errorCode)
+      : `Page load failed: ${String(event.errorDescription || event.errorCode || "Unknown error")}`;
+    elements.pageStatus.textContent = "Reload failed";
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = failureReason;
+    if (!showStickyPreview()) {
+      clearPreviewState();
+      resetCapturePane(failureReason, "Unavailable");
+    }
+    setMessage(failureReason);
   });
 
   const syncNavigation = async () => {
@@ -3148,22 +3911,20 @@ function renderSources() {
 
     if (elements.pluginsSupported) {
       const pluginCard = document.createElement("article");
-      pluginCard.className = "plugin-source-card";
+      pluginCard.className = "plugin-source-card plugin-source-card-compact";
       pluginCard.innerHTML = `
         <div class="plugin-source-top">
-          <strong>${plugin.label}</strong>
-          <div class="plugin-capabilities">
-            <span class="source-badge">Images</span>
-            <span class="source-badge">Texts</span>
+          <div>
+            <strong>${plugin.label}</strong>
+            <div class="plugin-source-meta">${plugin.domains.join(" · ")}</div>
           </div>
+          <span class="source-badge">Built in</span>
         </div>
-        <p class="message-text">${plugin.description}</p>
-        <div class="plugin-source-meta">${plugin.domains.join(" · ")}</div>
       `;
       const browseButton = document.createElement("button");
       browseButton.type = "button";
       browseButton.className = "ghost-button";
-      browseButton.textContent = `Browse ${plugin.label}`;
+      browseButton.textContent = "Browse";
       browseButton.addEventListener("click", () => {
       setMode("collect");
       const activeTab = getActiveTab();
@@ -3346,17 +4107,27 @@ async function renderManageList() {
       .toLowerCase();
     return haystack.includes(query);
   });
+  const forceCompactLayout = inventory.length > 120 && state.manageLayout === "cards";
+  const effectiveManageLayout = forceCompactLayout ? "compact" : state.manageLayout;
 
   elements.filterAll.classList.toggle("is-active", state.manageFilter === "all");
   elements.filterSaved.classList.toggle("is-active", state.manageFilter === "saved");
   elements.filterIgnored.classList.toggle("is-active", state.manageFilter === "ignored");
   elements.filterUncollected.classList.toggle("is-active", state.manageFilter === "uncollected");
-  elements.layoutCards?.classList.toggle("is-active", state.manageLayout === "cards");
-  elements.layoutCompact?.classList.toggle("is-active", state.manageLayout === "compact");
+  elements.layoutCards?.classList.toggle("is-active", effectiveManageLayout === "cards");
+  elements.layoutCompact?.classList.toggle("is-active", effectiveManageLayout === "compact");
+  if (elements.layoutCards) {
+    elements.layoutCards.disabled = forceCompactLayout;
+    elements.layoutCards.title = forceCompactLayout
+      ? "Large filters use Compact layout to keep the library responsive."
+      : "";
+  }
   if (elements.manageSearch && elements.manageSearch.value !== state.manageQuery) {
     elements.manageSearch.value = state.manageQuery;
   }
-  elements.manageSummary.textContent = `${inventory.length} item${inventory.length === 1 ? "" : "s"}`;
+  elements.manageSummary.textContent = `${inventory.length} item${inventory.length === 1 ? "" : "s"}${
+    forceCompactLayout ? " · compact" : ""
+  }`;
   elements.manageList.innerHTML = "";
 
   if (!inventory.length) {
@@ -3366,8 +4137,8 @@ async function renderManageList() {
     return;
   }
 
-  elements.manageList.className = `manage-list${state.manageLayout === "compact" ? " is-compact" : ""}`;
-  if (state.manageLayout === "compact") {
+  elements.manageList.className = `manage-list${effectiveManageLayout === "compact" ? " is-compact" : ""}`;
+  if (effectiveManageLayout === "compact") {
     await renderManageCompactList(project, inventory, renderToken);
     return;
   }
@@ -3523,18 +4294,25 @@ async function fetchItemByUrl(url, options = {}) {
     }
   }
   if (!options.force && backgroundFetchPendingCache.has(cacheKey)) {
-    return backgroundFetchPendingCache.get(cacheKey);
+    return withFetchTimeout(backgroundFetchPendingCache.get(cacheKey), Number(options.timeoutMs || 0));
   }
 
   const pending = window.troveApi.fetchItemByUrl(normalizedUrl, options);
+  const timeoutMs = Number(options.timeoutMs || 0);
+  const pendingWithTimeout = withFetchTimeout(pending, timeoutMs);
   backgroundFetchPendingCache.set(cacheKey, pending);
 
   try {
-    const item = await pending;
+    const item = await pendingWithTimeout;
     if (item?.supported) {
       cacheFetchedItem(normalizedUrl, mode, item);
     }
     return item;
+  } catch (error) {
+    if (isTransientNetworkError(error)) {
+      return buildTransientFetchFailure(normalizedUrl, error);
+    }
+    throw error;
   } finally {
     if (backgroundFetchPendingCache.get(cacheKey) === pending) {
       backgroundFetchPendingCache.delete(cacheKey);
@@ -3652,7 +4430,10 @@ async function maybeHydrateSlwaCurrentPageItem(item) {
 }
 
 async function showCaptureItem(item, origin = "page", context = getCaptureContext(), requestId = 0) {
-  const markdown = await buildPreviewMarkdownCached(item);
+  const markdown =
+    requestId && origin === "link"
+      ? await withFetchTimeout(buildPreviewMarkdownCached(item), PREVIEW_FETCH_TIMEOUT_MS)
+      : await buildPreviewMarkdownCached(item);
   if (requestId && requestId !== state.captureRequestId) {
     return false;
   }
@@ -3665,21 +4446,56 @@ async function showCaptureItem(item, origin = "page", context = getCaptureContex
   return true;
 }
 
-async function previewItemFromUrl(url) {
-  const placeholder = { url: ensureUrl(url), aliases: [ensureUrl(url)] };
+function clearActivePreviewLoading(token, item, context) {
+  if (activePreviewLoading?.token === token) {
+    activePreviewLoading = null;
+  }
+  void applyImmediatePageLoading(item, "preview", false, "", context, token);
+}
+
+function queuePreviewItemFromUrl(url) {
+  const normalizedUrl = ensureUrl(url);
+  if (!normalizedUrl) {
+    return;
+  }
+  const placeholder = { url: normalizedUrl, aliases: [normalizedUrl] };
   const context = getCaptureContext();
   const requestId = ++state.captureRequestId;
   const previewToken = `preview-${requestId}`;
+
+  if (previewClickTimer) {
+    clearTimeout(previewClickTimer);
+    previewClickTimer = null;
+  }
+  if (activePreviewLoading?.token && activePreviewLoading.token !== previewToken) {
+    clearActivePreviewLoading(activePreviewLoading.token, activePreviewLoading.item, activePreviewLoading.context);
+  }
+
   state.previewActionId = previewToken;
   beginPreviewIntent("link", context, previewToken);
-  void applyImmediatePageLoading(placeholder, "preview", true, "", context);
-  setCaptureBusy("preview", true, placeholder, "Previewing…", previewToken);
-  setMessage("Loading linked item preview…");
+  activePreviewLoading = { item: placeholder, context, token: previewToken };
+  void applyImmediatePageLoading(placeholder, "preview", true, "", context, previewToken);
+  setMessage("Loading preview…");
   if (!hasStickyPreview()) {
-    resetCapturePane("Loading the linked record into the capture pane.", "Loading");
+    resetCapturePane("Loading preview.", "Loading");
   }
+  setCaptureBusy("preview", true, placeholder, "Loading preview", previewToken);
+
+  pendingPreviewRequest = { url: normalizedUrl, context, requestId, token: previewToken, placeholder };
+  previewClickTimer = setTimeout(() => {
+    const request = pendingPreviewRequest;
+    pendingPreviewRequest = null;
+    previewClickTimer = null;
+    if (request && state.previewActionId === request.token && request.requestId === state.captureRequestId) {
+      void runPreviewItemFromUrl(request);
+    }
+  }, PREVIEW_CLICK_DEBOUNCE_MS);
+}
+
+async function runPreviewItemFromUrl(request) {
+  const { url, context, requestId, token: previewToken, placeholder } = request;
   try {
-    const item = await fetchItemByUrl(url, { mode: "preview" });
+    const item = await fetchItemByUrl(url, { mode: "preview", timeoutMs: PREVIEW_FETCH_TIMEOUT_MS });
     if (requestId !== state.captureRequestId || state.previewActionId !== previewToken) {
       return;
     }
@@ -3700,14 +4516,32 @@ async function previewItemFromUrl(url) {
     if (!rendered || requestId !== state.captureRequestId || state.previewActionId !== previewToken) {
       return;
     }
+    elements.pageStatus.textContent = itemWithClickedAlias.title || "Preview";
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = `${itemWithClickedAlias.sourceLabel || "Source"} · ${formatItemType(itemWithClickedAlias.type)}`;
     setMessage(`Previewing ${itemWithClickedAlias.title}.`);
+  } catch (error) {
+    if (requestId !== state.captureRequestId || state.previewActionId !== previewToken) {
+      return;
+    }
+    const message =
+      error?.code === "PREVIEW_TIMEOUT"
+        ? "Preview is taking too long. Try again when the source responds."
+        : error?.message || "Could not build a preview for that link.";
+    if (!showStickyPreview()) {
+      clearPreviewState();
+      resetCapturePane(message);
+    }
+    setMessage(message);
   } finally {
     if (state.previewActionId === previewToken) {
       state.previewActionId = "";
+      clearPreviewIntent(previewToken);
+      setCaptureBusy("", false, null, "", previewToken);
+      clearActivePreviewLoading(previewToken, placeholder, context);
+    } else if (activePreviewLoading?.token === previewToken) {
+      clearActivePreviewLoading(previewToken, placeholder, context);
     }
-    clearPreviewIntent(previewToken);
-    setCaptureBusy("", false, null, "", previewToken);
-    void applyImmediatePageLoading(placeholder, "preview", false, "", context);
   }
 }
 
@@ -3717,9 +4551,21 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
     return;
   }
   try {
+    const startedAt = nowMs();
     const savableItem = await ensureCollectableItem(item);
+    recordPerfEvent("collect.item.ready", {
+      token: busyToken,
+      title: savableItem?.title || item?.title || "",
+      hydrateMs: Math.round(nowMs() - startedAt)
+    });
     await window.troveApi.saveItem(projectPath, savableItem);
-    if (isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), savableItem)) {
+    recordPerfEvent("collect.item.saved", {
+      token: busyToken,
+      title: savableItem?.title || "",
+      totalMs: Math.round(nowMs() - startedAt)
+    });
+    const superseded = hasSupersedingQueuedAction(projectPath, savableItem);
+    if (!superseded && isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), savableItem)) {
       setPreviewStatusOverride("saved", projectPath);
       previewState.item = savableItem;
       renderCapturePane(getDisplayedItem() || savableItem, getDisplayedMarkdown(), {
@@ -3727,8 +4573,10 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
         forcedStatus: "saved"
       });
     }
-    await applyImmediatePageFeedback(savableItem, "saved", context);
-    if (isCaptureContextCurrent(context)) {
+    if (!superseded) {
+      await applyImmediatePageFeedback(savableItem, "saved", context);
+    }
+    if (!superseded && isCaptureContextCurrent(context)) {
       setMessage(`Collected ${savableItem.title}.`);
     }
     const activeTab = getActiveTab();
@@ -3743,9 +4591,11 @@ async function collectItem(item, projectPath = getActiveProject()?.path, busyTok
   } finally {
     state.saveProgress = null;
     renderQueueTray();
-    setCaptureBusy("", false, null, "", busyToken);
+    if (!busyToken) {
+      setCaptureBusy("", false, null, "", busyToken);
+    }
     await applyImmediatePageLoading(item, "collect", false, "", context);
-    if (isCaptureContextCurrent(context) && getDisplayedItem()) {
+    if (!hasSupersedingQueuedAction(projectPath, item) && isCaptureContextCurrent(context) && getDisplayedItem()) {
       renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
     }
   }
@@ -3764,15 +4614,18 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
   }
   try {
     await window.troveApi.uncollectItem(projectPath, item);
-    if (isCaptureContextCurrent(options.context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
+    const superseded = hasSupersedingQueuedAction(projectPath, item);
+    if (!superseded && isCaptureContextCurrent(options.context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
       setPreviewStatusOverride("", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: ""
       });
     }
-    await applyImmediatePageFeedback(item, "", options.context);
-    if (isCaptureContextCurrent(options.context)) {
+    if (!superseded) {
+      await applyImmediatePageFeedback(item, "", options.context);
+    }
+    if (!superseded && isCaptureContextCurrent(options.context)) {
       setMessage(`Removed ${item.title} from the library.`);
     }
     const activeTab = getActiveTab();
@@ -3785,7 +4638,9 @@ async function uncollectItem(item, projectPath = getActiveProject()?.path, optio
       await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
     }
   } finally {
-    setCaptureBusy("", false, null, "", options.busyToken || "");
+    if (!options.busyToken) {
+      setCaptureBusy("", false, null, "", "");
+    }
     await applyImmediatePageLoading(item, "uncollect", false, "", options.context);
   }
 }
@@ -3797,15 +4652,18 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
   }
   try {
     await window.troveApi.unignoreItem(projectPath, item);
-    if (isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
+    const superseded = hasSupersedingQueuedAction(projectPath, item);
+    if (!superseded && isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
       setPreviewStatusOverride("", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: ""
       });
     }
-    await applyImmediatePageFeedback(item, "", context);
-    if (isCaptureContextCurrent(context)) {
+    if (!superseded) {
+      await applyImmediatePageFeedback(item, "", context);
+    }
+    if (!superseded && isCaptureContextCurrent(context)) {
       setMessage(`Unignored ${item.title}.`);
     }
     const activeTab = getActiveTab();
@@ -3818,7 +4676,9 @@ async function unignoreItem(item, projectPath = getActiveProject()?.path, busyTo
       await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
     }
   } finally {
-    setCaptureBusy("", false, null, "", busyToken);
+    if (!busyToken) {
+      setCaptureBusy("", false, null, "", busyToken);
+    }
     await applyImmediatePageLoading(item, "unignore", false, "", context);
   }
 }
@@ -3830,15 +4690,18 @@ async function ignoreItemInProject(item, projectPath = getActiveProject()?.path,
   }
   try {
     await window.troveApi.ignoreItem(projectPath, item);
-    if (isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
+    const superseded = hasSupersedingQueuedAction(projectPath, item);
+    if (!superseded && isCaptureContextCurrent(context) && itemsReferToSameRecord(getDisplayedItem(), item)) {
       setPreviewStatusOverride("ignored", projectPath);
       renderCapturePane(getDisplayedItem() || item, getDisplayedMarkdown(), {
         origin: previewState.origin,
         forcedStatus: "ignored"
       });
     }
-    await applyImmediatePageFeedback(item, "ignored", context);
-    if (isCaptureContextCurrent(context)) {
+    if (!superseded) {
+      await applyImmediatePageFeedback(item, "ignored", context);
+    }
+    if (!superseded && isCaptureContextCurrent(context)) {
       setMessage(`Ignored ${item.title}.`);
     }
     const activeTab = getActiveTab();
@@ -3851,7 +4714,9 @@ async function ignoreItemInProject(item, projectPath = getActiveProject()?.path,
       await refreshProjects(getPreferredRefreshProjectPath(projectPath), { skipCapture: true });
     }
   } finally {
-    setCaptureBusy("", false, null, "", busyToken);
+    if (!busyToken) {
+      setCaptureBusy("", false, null, "", busyToken);
+    }
     await applyImmediatePageLoading(item, "ignore", false, "", context);
   }
 }
@@ -3984,7 +4849,7 @@ async function handleInlineAction(payload) {
     return;
   }
   if (payload.action === "preview-link") {
-    await previewItemFromUrl(payload.url);
+    queuePreviewItemFromUrl(payload.url);
     return;
   }
   if (payload.action === "collect-link") {
@@ -3998,6 +4863,11 @@ async function handleInlineAction(payload) {
 
 function setDebugOutput(text) {
   elements.debugOutput.textContent = text;
+}
+
+function renderPerfSnapshot() {
+  setDebugOutput(buildPerfSnapshotText());
+  setMessage("Captured performance snapshot.");
 }
 
 async function getCurrentPageHtml() {
@@ -4121,100 +4991,114 @@ async function updateCaptureState() {
     resetCapturePane("Reading the current page and preparing its capture preview.", "Loading");
   }
 
-  let item = await extractCurrentItem();
-  if (requestId !== state.captureRequestId) {
-    return;
-  }
-
-  if (!item?.supported) {
-    const activeUrl = activeTab.url || "";
-    let activeHostname = "";
-    try {
-      activeHostname = new URL(activeUrl).hostname.toLowerCase();
-    } catch {
-      activeHostname = "";
-    }
-    if (isKnownCollectionHost(activeHostname)) {
-      const fallback = await fetchItemByUrl(activeUrl, { force: true, mode: "preview" });
-      if (requestId !== state.captureRequestId) {
-        return;
-      }
-      if (fallback?.supported) {
-        item = fallback;
-      }
-    }
-  }
-
-  if (!item?.supported) {
-    const activeUrl = activeTab.url || "";
-    let activeHostname = "";
-    try {
-      activeHostname = new URL(activeUrl).hostname.toLowerCase();
-    } catch {
-      activeHostname = "";
-    }
-    const knownCollectionHost = isKnownCollectionHost(activeHostname);
-    elements.pageStatus.textContent = activeTab.title || "Page";
-    elements.pageKind.className = "page-kind";
-    elements.pageKind.textContent = knownCollectionHost
-      ? "This page itself is not directly collectible. Use Preview or Collect on the supported record links here."
-      : "Browse normally or preview a supported link from the page.";
-    if (hasInlinePreviewForActiveTab() && previewState.item) {
-      renderCapturePane(previewState.item, previewState.markdown, { origin: previewState.origin });
-    } else {
-      if (!showStickyPreview()) {
-        clearPreviewState();
-        resetCapturePane(
-          knownCollectionHost
-            ? "This page is a search or list view, not the final record. Use the inline Preview or Collect buttons on supported result links."
-            : item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record."
-        );
-      }
-    }
-    if (!project) {
-      setMessage("Create or select a project first.");
-    } else if (item?.reason) {
-      setMessage(item.reason);
-    }
-    return;
-  }
-
-  const context = getCaptureContext();
-  const needsFollowUp =
-    Boolean(item?.supported) &&
-    ((item.source === "trove" && /\/work\/\d+/i.test(item.url || activeTab?.url || "")) || item.source === "slwa");
-
-  if (needsFollowUp && !hasCurrentPagePreviewForTab(activeTab)) {
-    await showCaptureItem(item, "page", context, requestId);
+  try {
+    let item = await extractCurrentItem();
     if (requestId !== state.captureRequestId) {
       return;
     }
-  }
 
-  item = await maybeBridgeCurrentPageItem(item, activeTab);
-  if (requestId !== state.captureRequestId) {
-    return;
-  }
-  item = await maybeHydrateSlwaCurrentPageItem(item);
-  if (requestId !== state.captureRequestId) {
-    return;
-  }
+    if (!item?.supported) {
+      const activeUrl = activeTab.url || "";
+      let activeHostname = "";
+      try {
+        activeHostname = new URL(activeUrl).hostname.toLowerCase();
+      } catch {
+        activeHostname = "";
+      }
+      if (isKnownCollectionHost(activeHostname)) {
+        const fallback = await fetchItemByUrl(activeUrl, { force: true, mode: "preview" });
+        if (requestId !== state.captureRequestId) {
+          return;
+        }
+        if (fallback?.supported) {
+          item = fallback;
+        }
+      }
+    }
 
-  const rendered = await showCaptureItem(item, "page", context, requestId);
-  if (!rendered || requestId !== state.captureRequestId) {
-    return;
-  }
+    if (!item?.supported) {
+      const activeUrl = activeTab.url || "";
+      let activeHostname = "";
+      try {
+        activeHostname = new URL(activeUrl).hostname.toLowerCase();
+      } catch {
+        activeHostname = "";
+      }
+      const knownCollectionHost = isKnownCollectionHost(activeHostname);
+      elements.pageStatus.textContent = activeTab.title || "Page";
+      elements.pageKind.className = "page-kind";
+      elements.pageKind.textContent = knownCollectionHost
+        ? "This page itself is not directly collectible. Use Preview or Collect on the supported record links here."
+        : "Browse normally or preview a supported link from the page.";
+      if (hasInlinePreviewForActiveTab() && previewState.item) {
+        renderCapturePane(previewState.item, previewState.markdown, { origin: previewState.origin });
+      } else {
+        if (!showStickyPreview()) {
+          clearPreviewState();
+          resetCapturePane(
+            knownCollectionHost
+              ? "This page is a search or list view, not the final record. Use the inline Preview or Collect buttons on supported result links."
+              : item?.reason || "This page is not supported yet. The browser will stay out of the way until you hit a supported record."
+          );
+        }
+      }
+      if (!project) {
+        setMessage("Create or select a project first.");
+      } else if (item?.reason) {
+        setMessage(item.reason);
+      }
+      return;
+    }
 
-  const status = getEffectiveItemStatus(project, item);
-  elements.pageStatus.textContent = item.title;
-  elements.pageKind.className = "page-kind";
-  elements.pageKind.textContent = `${item.sourceLabel} · ${formatItemType(item.type)}`;
-  if (status === "saved") {
-    elements.pageKind.classList.add("item-state-saved");
-    elements.pageKind.textContent += " · already saved";
-  } else if (status === "ignored") {
-    elements.pageKind.classList.add("item-state-ignored");
-    elements.pageKind.textContent += " · ignored";
+    const context = getCaptureContext();
+    const needsFollowUp =
+      Boolean(item?.supported) &&
+      ((item.source === "trove" && /\/work\/\d+/i.test(item.url || activeTab?.url || "")) || item.source === "slwa");
+
+    if (needsFollowUp && !hasCurrentPagePreviewForTab(activeTab)) {
+      await showCaptureItem(item, "page", context, requestId);
+      if (requestId !== state.captureRequestId) {
+        return;
+      }
+    }
+
+    item = await maybeBridgeCurrentPageItem(item, activeTab);
+    if (requestId !== state.captureRequestId) {
+      return;
+    }
+    item = await maybeHydrateSlwaCurrentPageItem(item);
+    if (requestId !== state.captureRequestId) {
+      return;
+    }
+
+    const rendered = await showCaptureItem(item, "page", context, requestId);
+    if (!rendered || requestId !== state.captureRequestId) {
+      return;
+    }
+
+    const status = getEffectiveItemStatus(project, item);
+    elements.pageStatus.textContent = item.title;
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = `${item.sourceLabel} · ${formatItemType(item.type)}`;
+    if (status === "saved") {
+      elements.pageKind.classList.add("item-state-saved");
+      elements.pageKind.textContent += " · already saved";
+    } else if (status === "ignored") {
+      elements.pageKind.classList.add("item-state-ignored");
+      elements.pageKind.textContent += " · ignored";
+    }
+  } catch (error) {
+    const failureReason = isTransientNetworkError(error)
+      ? describeTransientNetworkError(error)
+      : error?.message || "Could not refresh the capture preview.";
+    elements.pageStatus.textContent = activeTab.title || "Page";
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = failureReason;
+    if (!showStickyPreview()) {
+      clearPreviewState();
+      resetCapturePane(failureReason, "Unavailable");
+    }
+    setMessage(failureReason);
   }
 }
 
@@ -4453,15 +5337,48 @@ elements.projectContextHide.addEventListener("click", () => {
 elements.pluginSeedUrls.addEventListener("input", () => {
   renderPluginIntake();
 });
-
-elements.pluginCopyPrompt.addEventListener("click", async () => {
-  await window.troveApi.copyText(elements.pluginPromptOutput.textContent || "");
-  setMessage("Copied new-source integration prompt.");
+elements.pluginSeedUrls.addEventListener("paste", (event) => {
+  const pasted = event.clipboardData?.getData("text/html") || event.clipboardData?.getData("text/plain") || "";
+  if (!pasted || !extractSupportedImportUrls(pasted).length) {
+    return;
+  }
+  queueMicrotask(() => {
+    renderPluginIntake();
+    openImportTriageDialogFromNotes();
+  });
+});
+elements.pluginUrlAnalysis?.addEventListener("change", (event) => {
+  if (event.target?.classList?.contains("plugin-triage-check") && elements.pluginOpenSelected) {
+    elements.pluginOpenSelected.disabled = !getSelectedPluginIntakeUrls().length;
+  }
+});
+elements.pluginOpenSelected?.addEventListener("click", () => {
+  const urls = getSelectedPluginIntakeUrls();
+  if (!urls.length) {
+    return;
+  }
+  openImportTriageDialogFromNotes(urls);
+});
+elements.pluginClearIntake?.addEventListener("click", () => {
+  elements.pluginSeedUrls.value = "";
+  renderPluginIntake();
+  setMessage("Cleared imported notes.");
+});
+elements.pluginDropZone?.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  elements.pluginDropZone.classList.add("is-dragging");
+});
+elements.pluginDropZone?.addEventListener("dragleave", () => {
+  elements.pluginDropZone.classList.remove("is-dragging");
+});
+elements.pluginDropZone?.addEventListener("drop", (event) => {
+  event.preventDefault();
+  void handlePluginDroppedFiles(event.dataTransfer?.files || []);
 });
 
-elements.pluginCopyProbeCommand.addEventListener("click", async () => {
-  await window.troveApi.copyText(buildPluginProbeCommand(getPluginSeedUrls()));
-  setMessage("Copied source probe command.");
+elements.settingsOpenDebug?.addEventListener("click", () => {
+  toggleDebugDrawer(true);
+  setMessage("Debug tools opened. Use dumps and perf snapshots before adding a new adapter.");
 });
 
 elements.troveLinkDialogInput?.addEventListener("input", () => {
@@ -4474,6 +5391,17 @@ elements.troveLinkDialogCancel?.addEventListener("click", () => {
 
 elements.troveLinkDialogBackdrop?.addEventListener("click", () => {
   closeTroveLinkDialog();
+});
+elements.troveLinkDialogPreview?.addEventListener("click", (event) => {
+  const button = event.target?.closest?.(".trove-link-preview-open");
+  const url = button?.getAttribute?.("data-url") || "";
+  if (!url) {
+    return;
+  }
+  setMode("collect");
+  openUrlListInTabs([url]);
+  closeTroveLinkDialog();
+  setMessage("Opening selected link.");
 });
 
 elements.troveLinkDialogOpen?.addEventListener("click", () => {
@@ -4496,7 +5424,7 @@ elements.troveLinkDialogOpenUnresolved?.addEventListener("click", () => {
   setMode("collect");
   openUrlListInTabs(urls);
   closeTroveLinkDialog();
-  setMessage(`Opening ${urls.length} unresolved ${config.label} tab${urls.length === 1 ? "" : "s"}.`);
+  setMessage(`Opening ${urls.length} ${config.id === "omni" ? "not yet handled" : "unresolved"} ${config.label} tab${urls.length === 1 ? "" : "s"}.`);
 });
 
 elements.addressForm.addEventListener("submit", (event) => {
@@ -4560,6 +5488,9 @@ elements.debugSaveItem.addEventListener("click", () => {
 });
 elements.debugSavePreview.addEventListener("click", () => {
   void saveDebugCapture("preview");
+});
+elements.debugPerfSnapshot?.addEventListener("click", () => {
+  renderPerfSnapshot();
 });
 elements.debugForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -4736,6 +5667,27 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("DOMContentLoaded", async () => {
+  window.trovePerf = {
+    snapshot: () => JSON.parse(buildPerfSnapshotText()),
+    events: () => [...state.perfEvents],
+    queue: () => describeQueueState(),
+    health: () => {
+      const snapshot = JSON.parse(buildPerfSnapshotText());
+      const issues = getAppHealthIssues(snapshot);
+      return {
+        ok: issues.length === 0,
+        issues,
+        snapshot
+      };
+    },
+    layout: () => {
+      const issues = getLayoutOverflowIssues();
+      return {
+        ok: issues.length === 0,
+        issues
+      };
+    }
+  };
   applySidebarWidth();
   renderProjectDialogLocation();
   renderTroveLinkDialogPreview();

@@ -88,6 +88,8 @@ npm run dist
 npm run dist:mac
 ```
 
+For agent/debug harness notes, see [`docs/HARNESS.md`](docs/HARNESS.md).
+
 Open tabs from the CLI:
 
 ```bash
