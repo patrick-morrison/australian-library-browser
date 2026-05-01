@@ -2,6 +2,7 @@ node_modules/
 .DS_Store
 *.trovelibrary/
 krantz/
+agwa-shipwreck-historic-ships-*/
 tmp/
 coverage/
 playwright-report/

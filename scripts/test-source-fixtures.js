@@ -32,6 +32,12 @@ const extractionFixtures = [
     file: "test/fixtures/wa-museum-record.html",
     url: "https://museum.wa.gov.au/maritime-archaeology-db/artefacts/bat3868-bronze",
     expect: { supported: true, source: "wa-museum", type: "image" }
+  },
+  {
+    name: "agwa-record",
+    file: "test/fixtures/agwa-record.html",
+    url: "https://collection.artgallery.wa.gov.au/objects/4492/not-titled-fishing-near-a-wreck-aborigines-plundering-the-wreck-of-the-william-wise",
+    expect: { supported: true, source: "agwa", type: "image" }
   }
 ];
 
@@ -47,6 +53,13 @@ const decorationFixtures = [
     file: "test/fixtures/slwa-search.html",
     payload: { saved: [], ignored: [] },
     minInlineActions: 1
+  },
+  {
+    name: "agwa-search-links",
+    file: "test/fixtures/agwa-search.html",
+    payload: { saved: [], ignored: [] },
+    minInlineActions: 1,
+    maxInlineActions: 1
   }
 ];
 
@@ -83,6 +96,12 @@ async function runDecorationFixture(browser, fixture) {
     result.inlineActions >= fixture.minInlineActions,
     `${fixture.name}: expected at least ${fixture.minInlineActions} inline actions, got ${result.inlineActions}`
   );
+  if (Number.isFinite(fixture.maxInlineActions)) {
+    assert(
+      result.inlineActions <= fixture.maxInlineActions,
+      `${fixture.name}: expected at most ${fixture.maxInlineActions} inline actions, got ${result.inlineActions}`
+    );
+  }
   return result;
 }
 

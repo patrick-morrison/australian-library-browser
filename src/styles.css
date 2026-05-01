@@ -1,23 +1,23 @@
 :root {
   --sidebar-width: 360px;
-  --paper: #f5ecdf;
-  --paper-strong: #efe3d0;
-  --ink: #1f1b16;
-  --muted: #6f6253;
-  --line: #d7c7b1;
+  --paper: #f0f1ee;
+  --paper-strong: #e3e6df;
+  --ink: #182027;
+  --muted: #64717c;
+  --line: #cbd4da;
   --accent: #4d6846;
   --accent-strong: #344d31;
   --decision: #286f88;
   --decision-strong: #1d566b;
   --decision-soft: #e1f0f3;
-  --forest: #2d5b4a;
-  --saved: #d8f0db;
-  --saved-ink: #215136;
-  --ignored: #e7e0d8;
-  --ignored-ink: #6c6258;
-  --shadow: 0 20px 40px rgba(49, 36, 22, 0.12);
-  --radius: 18px;
-  --radius-sm: 12px;
+  --forest: #3f6040;
+  --saved: #e1f4e8;
+  --saved-ink: #1f6642;
+  --ignored: #e7eaee;
+  --ignored-ink: #5b6570;
+  --shadow: 0 18px 42px rgba(22, 31, 39, 0.12);
+  --radius: 12px;
+  --radius-sm: 8px;
 }
 
 * {
@@ -32,12 +32,9 @@ html,
 body {
   margin: 0;
   min-height: 100%;
-  background:
-    radial-gradient(circle at top left, rgba(77, 104, 70, 0.12), transparent 30%),
-    radial-gradient(circle at bottom right, rgba(45, 91, 74, 0.14), transparent 26%),
-    var(--paper);
+  background: #f0f1ee;
   color: var(--ink);
-  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 body {
@@ -166,7 +163,7 @@ body.is-resizing-sidebar {
 }
 
 .app-shell.mode-collect {
-  padding: 12px;
+  padding: 10px;
 }
 
 .app-shell.mode-collect .library-head {
@@ -2512,6 +2509,8 @@ body {
   border-radius: 7px;
   padding: 8px 10px;
   font-size: 0.86rem;
+  line-height: 1;
+  min-block-size: 34px;
 }
 
 .mode-button.is-active,
@@ -2788,7 +2787,7 @@ textarea:focus-visible,
 .app-shell.mode-plugins .section-actions .ghost-button,
 .app-shell.mode-collect .section-actions .ghost-button {
   flex: 1 1 auto;
-  min-width: max-content;
+  min-width: 0;
 }
 
 .manage-item-markdown {

@@ -71,6 +71,13 @@
           keys.push(`wamuseum:${artefactMatch[1].toLowerCase()}`);
         }
       }
+
+      if (hostname === "collection.artgallery.wa.gov.au") {
+        const objectMatch = pathname.match(/\/objects\/(\d+)\//i);
+        if (objectMatch) {
+          keys.push(`agwa:${objectMatch[1].toLowerCase()}`);
+        }
+      }
     } catch {
       return [normalized];
     }
@@ -571,6 +578,80 @@
     `;
   }
 
+  function agwaExtractorSource() {
+    return `
+      () => {
+        const hostname = location.hostname.toLowerCase();
+        const pathname = location.pathname.toLowerCase();
+        if (hostname !== "collection.artgallery.wa.gov.au" || !/\\/objects\\/\\d+\\/[^/]+/i.test(pathname)) {
+          return { supported: false };
+        }
+
+        const title = helpers.cleanText(
+          document.querySelector("h1")?.textContent ||
+          helpers.pickMeta('meta[property="og:title"]', 'meta[name="twitter:title"]') ||
+          document.title.replace(/\\s*-\\s*Art Gallery WA$/i, "")
+        );
+        if (!title) {
+          return { supported: false };
+        }
+
+        const metadataFields = [];
+        for (const row of Array.from(document.querySelectorAll(".detail-row"))) {
+          const label = helpers.cleanText(row.querySelector(".detail-label")?.textContent || "");
+          const value = helpers.cleanText(row.querySelector(".detail-value")?.textContent || "");
+          if (label && value) {
+            metadataFields.push({ label, value });
+          }
+        }
+        const byLabel = new Map(metadataFields.map((field) => [String(field.label || "").toLowerCase(), field.value]));
+        const objectId = pathname.match(/\\/objects\\/(\\d+)\\//i)?.[1] || "";
+        const accessionNumber = byLabel.get("accession number") || "";
+        const artist = byLabel.get("artist/maker and role") || helpers.cleanText(document.querySelector("h2")?.textContent || "");
+        const date = byLabel.get("date") || "";
+        const medium = byLabel.get("medium") || "";
+        const collection =
+          metadataFields.find((field) => /state art collection/i.test(field.value || ""))?.value ||
+          "Art Gallery of Western Australia";
+        const imageUrl = [
+          document.querySelector(".zoom-list[data-vernon-zoom-url]")?.getAttribute("data-vernon-zoom-url") || "",
+          document.querySelector("#vernon-carousel a[href*='/records/images/']")?.getAttribute("href") || "",
+          document.querySelector("#vernon-carousel img[src*='/records/images/']")?.getAttribute("src") || "",
+          helpers.pickMeta('meta[property="og:image"]', 'meta[name="twitter:image"]')
+        ]
+          .map((candidate) => helpers.normalizeUrl(candidate))
+          .find((candidate) => /\\/records\\/images\\//i.test(candidate)) || "";
+        const subjectTags = helpers.cleanText(
+          Array.from(document.querySelectorAll(".tag-cloud, .subject-tags, [class*='tag']"))
+            .map((node) => node.textContent || "")
+            .join(" ")
+        );
+
+        return {
+          supported: true,
+          source: "agwa",
+          sourceLabel: "Art Gallery WA",
+          type: imageUrl ? "image" : "text",
+          id: accessionNumber || objectId || helpers.slugify(title) || "agwa-record",
+          title,
+          url: helpers.normalizeUrl(location.href),
+          aliases: [helpers.normalizeUrl(location.href), imageUrl],
+          citation: title + ". " + collection + ". " + helpers.normalizeUrl(location.href),
+          sourceTitle: collection,
+          description: [artist, date, medium].filter(Boolean).join("; "),
+          fullText: "",
+          imageUrl,
+          metadataFields,
+          rawMetadata: helpers.cleanText([
+            document.querySelector(".about-the-work")?.textContent || "",
+            subjectTags,
+            document.body?.textContent || ""
+          ].join(" ")).slice(0, 4000)
+        };
+      }
+    `;
+  }
+
   const plugins = [
     {
       id: "trove",
@@ -595,6 +676,14 @@
       browseUrl: "https://museum.wa.gov.au/maritime-archaeology-db/artefacts/search/Batavia",
       domains: ["museum.wa.gov.au"],
       extractorSource: waMuseumExtractorSource()
+    },
+    {
+      id: "agwa",
+      label: "Art Gallery WA",
+      description: "Collection object records from the Art Gallery of Western Australia.",
+      browseUrl: "https://collection.artgallery.wa.gov.au/explore",
+      domains: ["collection.artgallery.wa.gov.au"],
+      extractorSource: agwaExtractorSource()
     }
   ];
 
@@ -615,7 +704,8 @@
       /https?:\/\/encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i,
       /https?:\/\/purl\.slwa\.wa\.gov\.au\/[a-z0-9_./-]+/i,
       /https?:\/\/catalogue\.slwa\.wa\.gov\.au\/record=b\d+~S\d+/i,
-      /https?:\/\/museum\.wa\.gov\.au\/maritime-archaeology-db\/artefacts\/[^/?#]+/i
+      /https?:\/\/museum\.wa\.gov\.au\/maritime-archaeology-db\/artefacts\/[^/?#]+/i,
+      /https?:\/\/collection\.artgallery\.wa\.gov\.au\/objects\/\d+\/[^/?#]+/i
     ];
   }
 
@@ -721,6 +811,17 @@
           }
           return getControlGroupsForUrl(normalizedHref)[0] || null;
         };
+        const isAgwaObjectHref = (href) => {
+          try {
+            const parsedHref = new URL(href, location.href);
+            return parsedHref.hostname.toLowerCase() === "collection.artgallery.wa.gov.au" &&
+              /\\/objects\\/\\d+\\//i.test(parsedHref.pathname);
+          } catch {
+            return false;
+          }
+        };
+        const getAgwaCardContainer = (anchor) =>
+          anchor?.closest?.(".lightbox-item, .card, .object, .object-tile, .grid-item, article, li") || null;
         const getEntryContainer = (anchor, href) => {
           if (!anchor || !href) {
             return null;
@@ -742,6 +843,9 @@
           }
           if (host === "museum.wa.gov.au") {
             return anchor.closest(".wrap");
+          }
+          if (host === "collection.artgallery.wa.gov.au") {
+            return getAgwaCardContainer(anchor) || anchor.parentElement;
           }
           return null;
         };
@@ -855,10 +959,18 @@
             }
             return Boolean(anchor.closest(".wrap") && anchor.parentElement?.classList.contains("title"));
           }
+          if (host === "collection.artgallery.wa.gov.au") {
+            if (anchor.closest(".pagination, .breadcrumb, nav, header, footer, .dropdown-menu, .easy-nav, .shortlist")) {
+              return false;
+            }
+            return Boolean(getAgwaCardContainer(anchor)) &&
+              new RegExp("objects/(\\\\d+)/", "i").test(hrefPathWithSearch) &&
+              Boolean(text || anchor.querySelector("img"));
+          }
           return false;
         };
         const getControlsEntryContainer = (controls) =>
-          controls.closest(".result, .search-result-item, .briefcitDetail, .browseEntry, .bibRecordLink, article, li, tr, .record, .item, .wrap") ||
+          controls.closest(".result, .search-result-item, .briefcitDetail, .browseEntry, .bibRecordLink, article, li, tr, .record, .item, .wrap, .card, .object, .object-tile, .grid-item, .lightbox-item") ||
           controls.parentElement;
         const applyControlsState = (controls) => {
           if (!controls) {
@@ -921,6 +1033,33 @@
               ignore.setAttribute("aria-label", "Ignore");
               ignore.hidden = false;
               ignore.disabled = false;
+            }
+          }
+          if (controls.classList.contains("agwa-card-actions")) {
+            if (preview) {
+              preview.textContent = "P";
+              preview.title = "Preview";
+              preview.setAttribute("aria-label", "Preview");
+            }
+            if (collect) {
+              collect.textContent = effectiveStatus === "saved" ? "C" : "+";
+              collect.title = effectiveStatus === "saved" ? "Collected" : "Collect";
+              collect.setAttribute("aria-label", effectiveStatus === "saved" ? "Collected" : "Collect");
+            }
+            if (ignore) {
+              if (effectiveStatus === "saved") {
+                ignore.textContent = "S";
+                ignore.title = "Saved";
+                ignore.setAttribute("aria-label", "Saved");
+              } else if (effectiveStatus === "ignored") {
+                ignore.textContent = "U";
+                ignore.title = "Unignore";
+                ignore.setAttribute("aria-label", "Unignore");
+              } else {
+                ignore.textContent = "I";
+                ignore.title = "Ignore";
+                ignore.setAttribute("aria-label", "Ignore");
+              }
             }
           }
         };
@@ -1038,6 +1177,54 @@
               background: rgba(31, 48, 61, 0.08) !important;
               color: #53605b !important;
             }
+            .card.trove-library-has-actions,
+            .object.trove-library-has-actions,
+            .object-tile.trove-library-has-actions,
+            .grid-item.trove-library-has-actions {
+              position: relative !important;
+            }
+            .\${actionClass}.agwa-card-actions {
+              position: absolute !important;
+              right: 8px !important;
+              bottom: 8px !important;
+              z-index: 2147483000 !important;
+              display: inline-flex !important;
+              flex-wrap: nowrap !important;
+              gap: 4px !important;
+              margin: 0 !important;
+              padding: 4px !important;
+              border-radius: 999px !important;
+              background: rgba(0, 0, 0, 0.74) !important;
+              box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28) !important;
+              backdrop-filter: blur(4px) !important;
+            }
+            .\${actionClass}.agwa-card-actions button {
+              inline-size: 34px !important;
+              min-inline-size: 34px !important;
+              block-size: 28px !important;
+              min-block-size: 28px !important;
+              padding: 0 !important;
+              border-color: rgba(255, 255, 255, 0.24) !important;
+              font-size: 0 !important;
+              line-height: 1 !important;
+              box-shadow: none !important;
+            }
+            .\${actionClass}.agwa-card-actions button::before {
+              left: 50% !important;
+              margin-left: -5px !important;
+            }
+            .\${actionClass}.agwa-card-actions .preview {
+              background: rgba(255, 255, 255, 0.14) !important;
+              color: #e6f0e8 !important;
+            }
+            .\${actionClass}.agwa-card-actions .collect {
+              background: #286f88 !important;
+              color: #ffffff !important;
+            }
+            .\${actionClass}.agwa-card-actions .ignore {
+              background: rgba(255, 255, 255, 0.12) !important;
+              color: #eef2f4 !important;
+            }
             #\${badgeId} {
               position: fixed;
               right: 18px;
@@ -1133,6 +1320,22 @@
         };
         const ensureInlineActions = (anchor, href, forcedStatus = "") => {
           const normalizedHref = normalize(href);
+          const isAgwaObject = isAgwaObjectHref(normalizedHref);
+          const agwaCard = isAgwaObject ? getAgwaCardContainer(anchor) : null;
+          if (isAgwaObject && !agwaCard) {
+            anchor.dataset.troveLibraryBound = "true";
+            return;
+          }
+          if (isAgwaObject && agwaCard) {
+            const existing = Array.from(agwaCard.querySelectorAll("." + actionClass)).find(
+              (group) => normalize(group.getAttribute("data-trove-library-url") || "") === normalizedHref
+            );
+            if (existing) {
+              anchor.dataset.troveLibraryBound = "true";
+              applyControlsState(existing);
+              return;
+            }
+          }
           if (anchor.dataset.troveLibraryBound === "true") {
             const existing = getControlGroupForAnchor(anchor, href);
             if (existing && existing.classList.contains(actionClass)) {
@@ -1142,14 +1345,16 @@
           }
           anchor.dataset.troveLibraryBound = "true";
           const controls = document.createElement("span");
-          controls.className = actionClass;
+          controls.className = isAgwaObject && agwaCard ? actionClass + " agwa-card-actions" : actionClass;
           controls.setAttribute("data-trove-library-url", normalizedHref);
           const preview = document.createElement("button");
           preview.type = "button";
           preview.className = "preview";
           preview.setAttribute("data-trove-library-url", normalizedHref);
-          preview.textContent = "Preview";
-          applyInlineButtonChrome(preview, "92px");
+          preview.title = "Preview";
+          preview.setAttribute("aria-label", "Preview");
+          preview.textContent = isAgwaObject ? "P" : "Preview";
+          applyInlineButtonChrome(preview, isAgwaObject ? "34px" : "92px");
           preview.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -1160,8 +1365,10 @@
           collect.type = "button";
           collect.className = "collect";
           collect.setAttribute("data-trove-library-url", normalizedHref);
-          collect.textContent = "Collect";
-          applyInlineButtonChrome(collect, "108px");
+          collect.title = "Collect";
+          collect.setAttribute("aria-label", "Collect");
+          collect.textContent = isAgwaObject ? "+" : "Collect";
+          applyInlineButtonChrome(collect, isAgwaObject ? "34px" : "108px");
           collect.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -1177,8 +1384,10 @@
           ignore.type = "button";
           ignore.className = "ignore";
           ignore.setAttribute("data-trove-library-url", normalizedHref);
-          ignore.textContent = "Ignore";
-          applyInlineButtonChrome(ignore, "92px");
+          ignore.title = "Ignore";
+          ignore.setAttribute("aria-label", "Ignore");
+          ignore.textContent = isAgwaObject ? "I" : "Ignore";
+          applyInlineButtonChrome(ignore, isAgwaObject ? "34px" : "92px");
           ignore.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -1191,7 +1400,12 @@
             emit({ action: "ignore-link", url: href, label: anchor.textContent.trim() });
           });
           controls.append(preview, collect, ignore);
-          anchor.insertAdjacentElement("afterend", controls);
+          if (isAgwaObject && agwaCard) {
+            agwaCard.classList.add("trove-library-has-actions");
+            agwaCard.appendChild(controls);
+          } else {
+            anchor.insertAdjacentElement("afterend", controls);
+          }
           applyControlsState(controls);
         };
         const apply = () => {
@@ -1524,6 +1738,12 @@
               return false;
             }
             return Boolean(anchor.closest(".wrap") && anchor.parentElement?.classList.contains("title"));
+          }
+          if (host === "collection.artgallery.wa.gov.au") {
+            if (anchor.closest(".pagination, .breadcrumb, nav, header, footer, .dropdown-menu, .easy-nav, .shortlist")) {
+              return false;
+            }
+            return new RegExp("objects/(\\\\d+)/", "i").test(hrefPathWithSearch) && Boolean(text || anchor.querySelector("img"));
           }
           return false;
         };

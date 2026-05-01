@@ -23,6 +23,19 @@ The Debug drawer also has **Perf Snapshot**, which prints the same state into th
 - Tests should validate state through DOM and `window.trovePerf.health()`, not only screenshots.
 - Import Existing Research Notes should extract supported URLs locally from pasted notes or dropped files, show a selectable triage list, and open only the selected links.
 
+## Source Integration Harness Pattern
+
+Every new source should be proven in layers so the adapter can be one-shot safely, then debugged without guessing when a live site behaves differently from its fixture.
+
+1. Add search/list and detail fixtures first. The fixture test should cover metadata extraction, canonical URLs, inline action decoration, and duplicate-action prevention.
+2. Add a live search-path harness for the real user path, not only a direct result URL. Start from the source landing or browse URL, use the visible site search/filter UI, wait for the source's real result URL, and capture before/search/action screenshots into `tmp/e2e-live`.
+3. Prove injected controls with real app input. The harness must click Preview and Collect from the rendered source page and assert that preview markdown lands on the selected record and collection feedback appears.
+4. Keep renderer probes bounded. `webview.executeJavaScript` is useful for diagnostics and setup, but any probe must have a timeout and must not be the only proof that a broken page is usable.
+5. Assert the app shell stays recoverable. A source page error or stuck webview load must not leave `#page-status` stuck on `Loading`, and Back, Forward, Reload, Preview, and Collect controls must remain clickable.
+6. Save diagnostics that explain the failure. Log the final app URL/status, selected record URL, action count, screenshots, and any timed-out probe so the next run starts at the real fault.
+
+AGWA is the reference case for this pattern: the direct `/objects?query=...` URL can render cleanly while the `/explore` search flow leaves the guest page partially responsive. The harness therefore has to exercise `/explore`, submit the visible search form, then press Preview and Collect on the result controls.
+
 ## Relevant Commands
 
 ```bash
@@ -32,6 +45,7 @@ npm run test:e2e:workflow-harness
 npm run test:e2e:supported-sites
 npm run test:e2e:bulk-search
 node scripts/run-with-retry.js scripts/test-live-inline-sidebar-actions.js 2
+node scripts/test-live-agwa-explore-search.js
 ```
 
 The inline/sidebar action test asserts immediate busy/final feedback for sidebar collect and ignore.

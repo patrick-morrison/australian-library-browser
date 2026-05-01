@@ -1,6 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
-const { exec } = require("child_process");
+const { exec, execFile } = require("child_process");
 const { promisify } = require("util");
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell, session, clipboard } = require("electron");
 const { JSDOM } = require("jsdom");
@@ -11,14 +11,19 @@ const sourceAdapters = require("./lib/source-adapters");
 
 const workspaceRoot = process.cwd();
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const customUserDataDir = String(
   process.env.AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR || process.env.TROVE_BROWSER_USER_DATA_DIR || ""
 ).trim();
 if (customUserDataDir) {
   app.setPath("userData", path.resolve(customUserDataDir));
 }
-if (process.env.AUSTRALIAN_LIBRARY_BROWSER_DISABLE_GPU === "1" || process.env.TROVE_BROWSER_DISABLE_GPU === "1") {
+const enableGpu =
+  process.env.AUSTRALIAN_LIBRARY_BROWSER_ENABLE_GPU === "1" || process.env.TROVE_BROWSER_ENABLE_GPU === "1";
+if (!enableGpu) {
   app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
 }
 const WEBVIEW_PARTITION = "persist:trove-library";
 const BROWSER_USER_AGENT =
@@ -45,6 +50,15 @@ function ensureWebContentsListenerCapacity(contents) {
   if (currentMax !== 0 && currentMax < MIN_WEBCONTENTS_LISTENER_LIMIT) {
     contents.setMaxListeners(MIN_WEBCONTENTS_LISTENER_LIMIT);
   }
+}
+
+async function openTerminalAtPath(targetPath) {
+  const resolvedPath = path.resolve(String(targetPath || workspaceRoot));
+  if (process.platform === "darwin") {
+    await execFileAsync("/usr/bin/open", ["-a", "Terminal", resolvedPath]);
+    return "";
+  }
+  return shell.openPath(resolvedPath);
 }
 
 function normalizeIncomingUrl(value) {
@@ -136,7 +150,7 @@ function createWindow() {
     height: 960,
     minWidth: 1180,
     minHeight: 760,
-    backgroundColor: "#efe3d0",
+    backgroundColor: "#f0f1ee",
     title: "The Australian Library Browser",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -680,6 +694,7 @@ app.whenReady().then(() => {
   ipcMain.handle("files:read-text", async (_event, targetPath) => fs.readFile(targetPath, "utf8"));
   ipcMain.handle("files:read-bytes", async (_event, targetPath) => Array.from(await fs.readFile(targetPath)));
   ipcMain.handle("shell:open-path", async (_event, targetPath) => shell.openPath(targetPath));
+  ipcMain.handle("shell:open-terminal", async (_event, targetPath) => openTerminalAtPath(targetPath));
   ipcMain.handle("shell:open-external", async (_event, targetUrl) => shell.openExternal(targetUrl));
   ipcMain.handle("clipboard:write-text", async (_event, value) => {
     clipboard.writeText(String(value || ""));

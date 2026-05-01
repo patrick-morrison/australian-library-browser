@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self'; connect-src 'self'; frame-src https: http:;">
     <title>The Australian Library Browser</title>
+    <style>
+      html,
+      body {
+        background: #f0f1ee;
+      }
+    </style>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -52,6 +58,7 @@
             <h2>Project</h2>
             <div class="section-actions">
               <button id="open-project-folder" type="button" class="ghost-button" disabled>Open Folder</button>
+              <button id="open-project-terminal" type="button" class="ghost-button" disabled>Terminal</button>
               <button id="close-project-button" type="button" class="ghost-button" disabled>Close</button>
             </div>
           </div>
@@ -295,6 +302,8 @@
         </div>
 
         <div id="project-context-menu" class="project-context-menu" hidden>
+          <button id="project-context-open-folder" type="button" class="project-context-item">Open Folder</button>
+          <button id="project-context-open-terminal" type="button" class="project-context-item">Open in Terminal</button>
           <button id="project-context-hide" type="button" class="project-context-item">Close Library</button>
         </div>
 

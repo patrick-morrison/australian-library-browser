@@ -54,12 +54,15 @@ const elements = {
   projectCount: document.getElementById("project-count"),
   projectList: document.getElementById("project-list"),
   projectContextMenu: document.getElementById("project-context-menu"),
+  projectContextOpenFolder: document.getElementById("project-context-open-folder"),
+  projectContextOpenTerminal: document.getElementById("project-context-open-terminal"),
   projectContextHide: document.getElementById("project-context-hide"),
   projectDetails: document.getElementById("project-details"),
   savedSearches: document.getElementById("saved-searches"),
   sourceList: document.getElementById("source-list"),
   pluginsSupported: document.getElementById("plugins-supported"),
   openProjectFolder: document.getElementById("open-project-folder"),
+  openProjectTerminal: document.getElementById("open-project-terminal"),
   openSearchesFolder: document.getElementById("open-searches-folder"),
   closeProjectButton: document.getElementById("close-project-button"),
   sidebarResizer: document.getElementById("sidebar-resizer"),
@@ -187,6 +190,8 @@ const PREVIEW_MARKDOWN_MAX_ENTRIES = 400;
 const QUEUE_TRAY_REVEAL_DELAY_MS = 650;
 const PREVIEW_CLICK_DEBOUNCE_MS = 80;
 const PREVIEW_FETCH_TIMEOUT_MS = 18000;
+const CAPTURE_FETCH_TIMEOUT_MS = 18000;
+const WEBVIEW_LOAD_TIMEOUT_MS = 45000;
 let webviewResizeObserver = null;
 let previewClickTimer = null;
 let pendingPreviewRequest = null;
@@ -782,7 +787,7 @@ function ensureUrl(value) {
     return trimmed;
   }
   if (
-    /^(?:trove\.nla\.gov\.au|nla\.gov\.au|encore\.slwa\.wa\.gov\.au|purl\.slwa\.wa\.gov\.au|catalogue\.slwa\.wa\.gov\.au|museum\.wa\.gov\.au)\b/i.test(
+    /^(?:trove\.nla\.gov\.au|nla\.gov\.au|encore\.slwa\.wa\.gov\.au|purl\.slwa\.wa\.gov\.au|catalogue\.slwa\.wa\.gov\.au|museum\.wa\.gov\.au|collection\.artgallery\.wa\.gov\.au)\b/i.test(
       trimmed
     )
   ) {
@@ -913,8 +918,49 @@ function isKnownCollectionHost(hostname) {
     "catalogue.slwa.wa.gov.au",
     "encore.slwa.wa.gov.au",
     "purl.slwa.wa.gov.au",
-    "museum.wa.gov.au"
+    "museum.wa.gov.au",
+    "collection.artgallery.wa.gov.au"
   ].includes(String(hostname || "").toLowerCase());
+}
+
+function isKnownSearchOrListUrl(url) {
+  const normalizedUrl = ensureUrl(url);
+  if (!normalizedUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(normalizedUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "collection.artgallery.wa.gov.au") {
+      return /^\/objects\/?$/i.test(parsed.pathname) || /^\/search\/?$/i.test(parsed.pathname);
+    }
+    if (host === "trove.nla.gov.au") {
+      return /^\/search/i.test(parsed.pathname) || parsed.pathname === "/";
+    }
+    if (host === "encore.slwa.wa.gov.au") {
+      return /\/iii\/encore\/search/i.test(parsed.pathname);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isAgwaSearchResultsUrl(url) {
+  const normalizedUrl = ensureUrl(url);
+  if (!normalizedUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(normalizedUrl);
+    return (
+      parsed.hostname.toLowerCase() === "collection.artgallery.wa.gov.au" &&
+      /^\/objects\/?$/i.test(parsed.pathname) &&
+      parsed.searchParams.has("query")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function setMessage(text) {
@@ -1436,6 +1482,8 @@ function buildInlineQueueStub(url, label = "") {
     source = "slwa";
   } else if (/museum\.wa\.gov\.au/i.test(normalizedUrl)) {
     source = "wa-museum";
+  } else if (/collection\.artgallery\.wa\.gov\.au/i.test(normalizedUrl)) {
+    source = "agwa";
   }
   return {
     url: normalizedUrl,
@@ -2716,7 +2764,8 @@ function getSupportedImportUrlPatterns() {
     /https?:\/\/encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i,
     /https?:\/\/purl\.slwa\.wa\.gov\.au\/[a-z0-9_./-]+/i,
     /https?:\/\/catalogue\.slwa\.wa\.gov\.au\/record=b\d+~S\d+/i,
-    /https?:\/\/museum\.wa\.gov\.au\/maritime-archaeology-db\/artefacts\/[^/?#]+/i
+    /https?:\/\/museum\.wa\.gov\.au\/maritime-archaeology-db\/artefacts\/[^/?#]+/i,
+    /https?:\/\/collection\.artgallery\.wa\.gov\.au\/objects\/\d+\/[^/?#]+/i
   ];
 }
 
@@ -3164,7 +3213,11 @@ function openUrlInTab(url = getDefaultBrowseUrl(), options = {}) {
     extractionToken: "",
     extractionPromise: null,
     decorationSignature: "",
-    refreshTimer: null
+    refreshTimer: null,
+    scriptRecoveryKey: "",
+    listSettleTimer: null,
+    loadingStartedAt: 0,
+    loadWatchdogTimer: null
   };
 
   bindWebview(tab);
@@ -3263,7 +3316,6 @@ function installBrowserPageLinkInterceptors(tab) {
       const prefix = "__trove_library_browser_action__";
       const emit = (payload) => console.log(prefix + JSON.stringify(payload));
       const findAnchor = (target) => (target instanceof Element ? target.closest("a[href]") : null);
-
       document.addEventListener(
         "click",
         (event) => {
@@ -3330,6 +3382,8 @@ function closeTab(tabId) {
   if (tab.refreshTimer) {
     clearTimeout(tab.refreshTimer);
   }
+  clearListSettleTimer(tab);
+  clearWebviewLoadWatchdog(tab);
   tab.webview.remove();
 
   if (state.activeTabId === tabId) {
@@ -3420,6 +3474,125 @@ function scheduleTabRefresh(tab = getActiveTab(), options = {}) {
       console.error("Scheduled tab refresh failed.", error);
     }
   }, delay);
+}
+
+function renderSearchOrListCaptureState(tab = getActiveTab()) {
+  if (!tab || !isKnownSearchOrListUrl(tab.url || tab.webview?.getURL?.() || "")) {
+    return false;
+  }
+  elements.pageStatus.textContent = tab.title || "Search results";
+  elements.pageKind.className = "page-kind";
+  elements.pageKind.textContent = "This page itself is not directly collectible. Use Preview or Collect on the supported record links here.";
+  if (!showStickyPreview()) {
+    clearPreviewState();
+    resetCapturePane(
+      "This page is a search or list view, not the final record. Use the inline Preview or Collect buttons on supported result links."
+    );
+  }
+  return true;
+}
+
+function clearListSettleTimer(tab) {
+  if (tab?.listSettleTimer) {
+    clearTimeout(tab.listSettleTimer);
+    tab.listSettleTimer = null;
+  }
+}
+
+function scheduleSearchListLoadingSettle(tab) {
+  clearListSettleTimer(tab);
+  tab.listSettleTimer = setTimeout(() => {
+    tab.listSettleTimer = null;
+    if (!tab.webview?.isConnected) {
+      return;
+    }
+    const currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
+    if (!isKnownSearchOrListUrl(currentUrl)) {
+      return;
+    }
+    tab.url = currentUrl;
+    try {
+      if (typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
+        tab.webview.stop();
+      }
+    } catch {
+      // Leave the page visible and recover the surrounding app state.
+    }
+    updateNavigationButtons();
+    if (tab.id === state.activeTabId) {
+      renderSearchOrListCaptureState(tab);
+      setMessage("Search results are ready.");
+    }
+  }, 8000);
+}
+
+function settleSearchListLoadingTab(tab) {
+  if (!tab?.webview?.isConnected) {
+    return false;
+  }
+  const currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
+  if (!isKnownSearchOrListUrl(currentUrl)) {
+    return false;
+  }
+  tab.url = currentUrl;
+  try {
+    if (typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
+      tab.webview.stop();
+    }
+  } catch {
+    // Leave the visible page alone and recover the surrounding app state.
+  }
+  tab.loadingStartedAt = 0;
+  if (tab.scriptRecoveryKey !== currentUrl) {
+    tab.scriptRecoveryKey = currentUrl;
+    if (tab.id === state.activeTabId) {
+      elements.pageStatus.textContent = "Recovering page";
+      elements.pageKind.className = "page-kind";
+      elements.pageKind.textContent = "The results page rendered but stopped answering the app. Reloading it once to restore controls.";
+      setMessage("Reloading an unresponsive results view.");
+    }
+    try {
+      tab.webview.reload();
+      startWebviewLoadWatchdog(tab);
+      return true;
+    } catch {
+      // Fall through to recovering the surrounding state.
+    }
+  }
+  updateNavigationButtons();
+  if (tab.id === state.activeTabId) {
+    elements.addressInput.value = currentUrl;
+    renderSearchOrListCaptureState(tab);
+    setMessage("Search results are ready.");
+  }
+  return true;
+}
+
+function monitorWebviewRecoverability() {
+  const now = nowMs();
+  for (const tab of state.tabs) {
+    if (!tab?.webview?.isConnected) {
+      continue;
+    }
+    let currentUrl = "";
+    let isLoading = false;
+    try {
+      currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
+      isLoading = typeof tab.webview.isLoading === "function" && tab.webview.isLoading();
+    } catch {
+      continue;
+    }
+    if (!isLoading) {
+      tab.loadingStartedAt = 0;
+      continue;
+    }
+    if (!tab.loadingStartedAt) {
+      tab.loadingStartedAt = now;
+    }
+    if (isKnownSearchOrListUrl(currentUrl) && now - tab.loadingStartedAt > 8000) {
+      settleSearchListLoadingTab(tab);
+    }
+  }
 }
 
 function nudgeWebviewLayout(tab) {
@@ -3591,6 +3764,118 @@ function dismissPageObstructions(tab) {
   }
 }
 
+function clearWebviewLoadWatchdog(tab) {
+  if (tab?.loadWatchdogTimer) {
+    clearTimeout(tab.loadWatchdogTimer);
+    tab.loadWatchdogTimer = null;
+  }
+}
+
+function startWebviewLoadWatchdog(tab) {
+  clearWebviewLoadWatchdog(tab);
+  tab.loadWatchdogTimer = setTimeout(() => {
+    tab.loadWatchdogTimer = null;
+    if (!tab.webview?.isConnected || tab.didDomReady) {
+      return;
+    }
+    try {
+      if (typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
+        tab.webview.stop();
+      }
+    } catch {
+      // The webview may detach during shutdown or tab replacement.
+    }
+    if (tab.id !== state.activeTabId) {
+      return;
+    }
+    const failureReason = "This page stalled while loading. The browser is still usable; try refresh when the site responds.";
+    elements.pageStatus.textContent = "Load stalled";
+    elements.pageKind.className = "page-kind";
+    elements.pageKind.textContent = failureReason;
+    if (!showStickyPreview()) {
+      clearPreviewState();
+      resetCapturePane(failureReason, "Unavailable");
+    }
+    setMessage(failureReason);
+  }, WEBVIEW_LOAD_TIMEOUT_MS);
+}
+
+function scheduleWebviewResponsivenessProbe(tab) {
+  if (!tab?.webview?.isConnected || !isKnownSearchOrListUrl(tab.webview.getURL?.() || tab.url || "")) {
+    return;
+  }
+  setTimeout(async () => {
+    if (!tab.webview?.isConnected) {
+      return;
+    }
+    const currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
+    if (!isKnownSearchOrListUrl(currentUrl)) {
+      return;
+    }
+    const probe = await safeExecuteJavaScript(
+      tab,
+      "document.readyState",
+      true,
+      "__trove_probe_timeout__",
+      { requireReady: false }
+    );
+    if (probe !== "__trove_probe_timeout__" || tab.scriptRecoveryKey === currentUrl) {
+      return;
+    }
+    tab.scriptRecoveryKey = currentUrl;
+    if (tab.id === state.activeTabId) {
+      elements.pageStatus.textContent = "Recovering page";
+      elements.pageKind.className = "page-kind";
+      elements.pageKind.textContent = "The page rendered but stopped answering the app. Reloading it once to restore controls.";
+      setMessage("Reloading an unresponsive page view.");
+    }
+    try {
+      tab.webview.reload();
+      startWebviewLoadWatchdog(tab);
+    } catch {
+      void navigateExistingTab(tab, currentUrl);
+    }
+  }, 1200);
+}
+
+function scheduleSearchInlineActionProbe(tab) {
+  if (!tab?.webview?.isConnected || !isAgwaSearchResultsUrl(tab.webview.getURL?.() || tab.url || "")) {
+    return;
+  }
+  setTimeout(async () => {
+    if (!tab.webview?.isConnected) {
+      return;
+    }
+    const currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
+    if (!isAgwaSearchResultsUrl(currentUrl) || tab.scriptRecoveryKey === currentUrl) {
+      return;
+    }
+    const actionCount = await safeExecuteJavaScript(
+      tab,
+      `(() => document.querySelectorAll(".trove-library-inline-actions").length)();`,
+      true,
+      "__trove_probe_timeout__",
+      { requireReady: false }
+    );
+    if (Number(actionCount) > 0) {
+      return;
+    }
+    tab.scriptRecoveryKey = currentUrl;
+    if (tab.id === state.activeTabId) {
+      elements.pageStatus.textContent = "Recovering page";
+      elements.pageKind.className = "page-kind";
+      elements.pageKind.textContent = "The results page rendered without collection controls. Reloading it once to restore them.";
+      setMessage("Reloading the results view to restore collection controls.");
+    }
+    try {
+      tab.webview.reload();
+      startWebviewLoadWatchdog(tab);
+    } catch {
+      void navigateExistingTab(tab, currentUrl);
+    }
+  }, 2200);
+}
+
 function bindWebview(tab) {
   tab.webview.addEventListener("console-message", (event) => {
     try {
@@ -3613,6 +3898,7 @@ function bindWebview(tab) {
   });
 
   tab.webview.addEventListener("dom-ready", async () => {
+    clearWebviewLoadWatchdog(tab);
     tab.didDomReady = true;
     installBrowserPageLinkInterceptors(tab);
     syncWebviewElementSize(tab);
@@ -3628,6 +3914,9 @@ function bindWebview(tab) {
 
   tab.webview.addEventListener("did-start-loading", () => {
     tab.didDomReady = false;
+    tab.loadingStartedAt = nowMs();
+    scheduleSearchListLoadingSettle(tab);
+    startWebviewLoadWatchdog(tab);
     updateNavigationButtons();
     invalidateTabCaches(tab);
     if (state.previewIntent?.tabId === tab.id) {
@@ -3646,6 +3935,8 @@ function bindWebview(tab) {
     if (event.isMainFrame === false || Number(event.errorCode) === -3) {
       return;
     }
+    clearWebviewLoadWatchdog(tab);
+    clearListSettleTimer(tab);
     tab.didDomReady = false;
     updateNavigationButtons();
     if (tab.id !== state.activeTabId) {
@@ -3665,11 +3956,13 @@ function bindWebview(tab) {
   });
 
   const syncNavigation = async () => {
+    clearWebviewLoadWatchdog(tab);
     const nextUrl = tab.webview.getURL();
     const urlChanged = nextUrl !== tab.url;
     tab.url = nextUrl;
     if (urlChanged) {
       invalidateTabCaches(tab);
+      tab.scriptRecoveryKey = "";
       if (state.previewIntent?.tabId === tab.id) {
         clearPreviewIntent(state.previewIntent.token || "");
       }
@@ -3686,7 +3979,42 @@ function bindWebview(tab) {
     syncWebviewElementSize(tab);
     nudgeWebviewLayout(tab);
     dismissPageObstructions(tab);
-    scheduleTabRefresh(tab, { delay: 90 });
+    try {
+      const stillLoading = typeof tab.webview.isLoading === "function" && tab.webview.isLoading();
+      if (!stillLoading) {
+        tab.loadingStartedAt = 0;
+      }
+      if (isKnownSearchOrListUrl(tab.url) && stillLoading) {
+        scheduleSearchListLoadingSettle(tab);
+      } else {
+        clearListSettleTimer(tab);
+      }
+    } catch {
+      // Ignore transient webview state during navigation.
+    }
+    scheduleWebviewResponsivenessProbe(tab);
+    scheduleSearchInlineActionProbe(tab);
+    if (isKnownSearchOrListUrl(tab.url)) {
+      scheduleTabRefresh(tab, { delay: 90 });
+      for (const delay of [900, 2200, 5000]) {
+        const expectedUrl = tab.url;
+        setTimeout(async () => {
+          if (!tab.webview?.isConnected || tab.url !== expectedUrl) {
+            return;
+          }
+          try {
+            await applyProjectDecorations();
+            if (tab.id === state.activeTabId) {
+              await updateCaptureState();
+            }
+          } catch (error) {
+            console.error("Search/list decoration refresh failed.", error);
+          }
+        }, delay);
+      }
+    } else {
+      scheduleTabRefresh(tab, { delay: 90 });
+    }
   };
 
   tab.webview.addEventListener("did-stop-loading", syncNavigation);
@@ -3958,7 +4286,7 @@ function renderProjects() {
     button.classList.toggle("is-active", activeProject?.path === project.path);
     fragment.querySelector(".project-name").textContent = project.folderName;
     fragment.querySelector(".project-meta").textContent = `${textCount} articles · ${imageCount} images`;
-    button.title = "Click to open. Right-click to hide this library from the list.";
+    button.title = "Click to open. Right-click for folder, terminal, and close actions.";
     button.addEventListener("click", async () => {
       closeProjectContextMenu();
       state.activeProjectPath = project.path;
@@ -3982,6 +4310,7 @@ function renderProjects() {
 function renderProjectDetails() {
   const project = getActiveProject();
   elements.openProjectFolder.disabled = !project;
+  elements.openProjectTerminal.disabled = !project;
   elements.closeProjectButton.disabled = !project;
 
   if (!project) {
@@ -4171,9 +4500,10 @@ function updateNavigationButtons() {
     return;
   }
 
-  elements.backButton.disabled = !safeCanGo(activeTab, "back");
-  elements.forwardButton.disabled = !safeCanGo(activeTab, "forward");
-  elements.reloadButton.disabled = !activeTab.webview?.isConnected;
+  const connected = Boolean(activeTab.webview?.isConnected);
+  elements.backButton.disabled = !connected;
+  elements.forwardButton.disabled = !connected;
+  elements.reloadButton.disabled = !connected;
   elements.saveSearchButton.disabled =
     !getActiveProject() || !ensureUrl(activeTab.url || "") || isCurrentPageAlreadySavedSearch();
 }
@@ -4221,7 +4551,13 @@ async function extractItemFromWebview(webview, cacheTarget = null) {
 
     while (Date.now() - startedAt < timeoutMs) {
       try {
-        const result = await webview.executeJavaScript(sourceRegistry.buildExtractionScript(), true);
+        const result = await safeExecuteJavaScript(
+          webview,
+          sourceRegistry.buildExtractionScript(),
+          true,
+          null,
+          { requireReady: false }
+        );
         if (result?.supported) {
           lastSupported = result;
           if (!isStableExtractedItem(result)) {
@@ -4278,7 +4614,7 @@ async function extractCurrentItem() {
     !extracted?.supported &&
     /https?:\/\/purl\.slwa\.wa\.gov\.au\/download\/slwa_[a-z0-9_]+\.(jpg|jpeg|png|tif|tiff|webp)(\?[^#]*)?$/i.test(activeTab.url || "")
   ) {
-    return fetchItemByUrl(activeTab.url, { force: true });
+    return fetchItemByUrl(activeTab.url, { force: true, timeoutMs: CAPTURE_FETCH_TIMEOUT_MS });
   }
   return extracted;
 }
@@ -4294,11 +4630,14 @@ async function fetchItemByUrl(url, options = {}) {
     }
   }
   if (!options.force && backgroundFetchPendingCache.has(cacheKey)) {
-    return withFetchTimeout(backgroundFetchPendingCache.get(cacheKey), Number(options.timeoutMs || 0));
+    return withFetchTimeout(
+      backgroundFetchPendingCache.get(cacheKey),
+      Number(options.timeoutMs || (mode === "preview" ? PREVIEW_FETCH_TIMEOUT_MS : 0))
+    );
   }
 
   const pending = window.troveApi.fetchItemByUrl(normalizedUrl, options);
-  const timeoutMs = Number(options.timeoutMs || 0);
+  const timeoutMs = Number(options.timeoutMs || (mode === "preview" ? PREVIEW_FETCH_TIMEOUT_MS : 0));
   const pendingWithTimeout = withFetchTimeout(pending, timeoutMs);
   backgroundFetchPendingCache.set(cacheKey, pending);
 
@@ -4431,8 +4770,11 @@ async function maybeHydrateSlwaCurrentPageItem(item) {
 
 async function showCaptureItem(item, origin = "page", context = getCaptureContext(), requestId = 0) {
   const markdown =
-    requestId && origin === "link"
-      ? await withFetchTimeout(buildPreviewMarkdownCached(item), PREVIEW_FETCH_TIMEOUT_MS)
+    requestId
+      ? await withFetchTimeout(
+          buildPreviewMarkdownCached(item),
+          origin === "link" ? PREVIEW_FETCH_TIMEOUT_MS : CAPTURE_FETCH_TIMEOUT_MS
+        )
       : await buildPreviewMarkdownCached(item);
   if (requestId && requestId !== state.captureRequestId) {
     return false;
@@ -4986,6 +5328,11 @@ async function updateCaptureState() {
   }
 
   const requestId = ++state.captureRequestId;
+  const activeUrl = activeTab.url || "";
+
+  if (renderSearchOrListCaptureState(activeTab)) {
+    return;
+  }
 
   if (!hasInlinePreviewForActiveTab() && !hasCurrentPagePreviewForTab(activeTab) && !hasStickyPreview()) {
     resetCapturePane("Reading the current page and preparing its capture preview.", "Loading");
@@ -4998,7 +5345,6 @@ async function updateCaptureState() {
     }
 
     if (!item?.supported) {
-      const activeUrl = activeTab.url || "";
       let activeHostname = "";
       try {
         activeHostname = new URL(activeUrl).hostname.toLowerCase();
@@ -5006,7 +5352,11 @@ async function updateCaptureState() {
         activeHostname = "";
       }
       if (isKnownCollectionHost(activeHostname)) {
-        const fallback = await fetchItemByUrl(activeUrl, { force: true, mode: "preview" });
+        const fallback = await fetchItemByUrl(activeUrl, {
+          force: true,
+          mode: "preview",
+          timeoutMs: CAPTURE_FETCH_TIMEOUT_MS
+        });
         if (requestId !== state.captureRequestId) {
           return;
         }
@@ -5229,6 +5579,25 @@ async function openExistingProject() {
   setMessage(`Opened ${selected.split("/").pop()}.`);
 }
 
+async function openProjectFolderPath(projectPath) {
+  if (!projectPath) {
+    return;
+  }
+  await window.troveApi.openPath(projectPath);
+}
+
+async function openProjectTerminalPath(projectPath) {
+  if (!projectPath) {
+    return;
+  }
+  try {
+    await window.troveApi.openTerminal(projectPath);
+    setMessage(`Opened terminal in ${projectPath.split("/").pop()}.`);
+  } catch (error) {
+    setMessage(error?.message || "Could not open terminal.");
+  }
+}
+
 async function closeActiveProject() {
   if (!getActiveProject()) {
     return;
@@ -5318,7 +5687,14 @@ elements.openProjectFolder.addEventListener("click", async () => {
   if (!project) {
     return;
   }
-  await window.troveApi.openPath(project.path);
+  await openProjectFolderPath(project.path);
+});
+elements.openProjectTerminal.addEventListener("click", async () => {
+  const project = getActiveProject();
+  if (!project) {
+    return;
+  }
+  await openProjectTerminalPath(project.path);
 });
 elements.openSearchesFolder.addEventListener("click", async () => {
   const project = getActiveProject();
@@ -5329,6 +5705,16 @@ elements.openSearchesFolder.addEventListener("click", async () => {
 });
 elements.closeProjectButton.addEventListener("click", () => {
   void closeActiveProject();
+});
+elements.projectContextOpenFolder.addEventListener("click", () => {
+  const projectPath = state.projectContextPath;
+  closeProjectContextMenu();
+  void openProjectFolderPath(projectPath);
+});
+elements.projectContextOpenTerminal.addEventListener("click", () => {
+  const projectPath = state.projectContextPath;
+  closeProjectContextMenu();
+  void openProjectTerminalPath(projectPath);
 });
 elements.projectContextHide.addEventListener("click", () => {
   void hideProjectFromPane();
@@ -5449,15 +5835,51 @@ elements.addressForm.addEventListener("submit", (event) => {
 
 elements.backButton.addEventListener("click", () => {
   interruptPreviewWork();
-  getActiveTab()?.webview.goBack();
+  const webview = getActiveTab()?.webview;
+  if (!webview?.isConnected) {
+    return;
+  }
+  try {
+    if (typeof webview.canGoBack !== "function" || webview.canGoBack()) {
+      webview.goBack();
+    }
+  } catch {
+    // Navigation recovery controls should never wedge the surrounding UI.
+  }
 });
 elements.forwardButton.addEventListener("click", () => {
   interruptPreviewWork();
-  getActiveTab()?.webview.goForward();
+  const webview = getActiveTab()?.webview;
+  if (!webview?.isConnected) {
+    return;
+  }
+  try {
+    if (typeof webview.canGoForward !== "function" || webview.canGoForward()) {
+      webview.goForward();
+    }
+  } catch {
+    // Navigation recovery controls should never wedge the surrounding UI.
+  }
 });
 elements.reloadButton.addEventListener("click", () => {
   interruptPreviewWork();
-  getActiveTab()?.webview.reload();
+  const activeTab = getActiveTab();
+  const webview = activeTab?.webview;
+  if (!webview?.isConnected) {
+    return;
+  }
+  try {
+    if (typeof webview.stop === "function" && typeof webview.isLoading === "function" && webview.isLoading()) {
+      webview.stop();
+    }
+    webview.reload();
+    startWebviewLoadWatchdog(activeTab);
+  } catch {
+    const fallbackUrl = ensureUrl(activeTab?.url || webview.getURL?.() || "");
+    if (fallbackUrl) {
+      void navigateExistingTab(activeTab, fallbackUrl);
+    }
+  }
 });
 elements.saveSearchButton.addEventListener("click", () => {
   void saveCurrentSearchResults();
@@ -5716,6 +6138,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   window.troveApi.onCommandOpenTabs((urls) => {
     openUrlListInTabs(urls);
   });
+  setInterval(monitorWebviewRecoverability, 1500);
   createTab();
   await refreshProjects("");
   window.troveApi.notifyRendererReady();

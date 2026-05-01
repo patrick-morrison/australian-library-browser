@@ -14,7 +14,7 @@ Workflow:
 4. Add fixture coverage for search, detail, and media variants.
 5. Implement the adapter in `src/source-plugins.js`.
 6. Add inline-result heuristics only for actual record/result links.
-7. Verify with `npm run test:fixtures` plus the relevant Electron harness.
+7. Verify with `npm run test:fixtures` plus a live Electron harness that follows the real source search UI, clicks Preview, and clicks Collect.
 
 Adapter requirements:
 
@@ -26,5 +26,6 @@ Adapter requirements:
 - Preserve alias recognition so saved, ignored, and uncollected states match equivalent URLs.
 - Keep browser UI feedback instant and non-blocking.
 - Avoid injecting controls into navigation, filter, pagination, header, footer, or decorative links.
+- Treat direct result URLs as necessary but insufficient. A source is not smooth until its normal search/browse path can be driven inside the app without stuck loading, blocked shell buttons, stale spinners, or invisible injected actions.
 
 If the site blocks automated browsing, stop and record the smallest missing input needed to finish the adapter.
