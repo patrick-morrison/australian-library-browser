@@ -61,6 +61,48 @@ async function readOuterState(page) {
 }
 
 async function clickVisibleAgwaAction(app, page, action) {
+  // Prefer querying the button bounds from the guest page for a precise click.
+  const guestBounds = await executeInActiveWebview(
+    page,
+    `(() => {
+      const buttons = Array.from(document.querySelectorAll(".trove-library-inline-actions.agwa-card-actions .${action}"));
+      for (const button of buttons) {
+        const rect = button.getBoundingClientRect();
+        const centerY = rect.top + rect.height / 2;
+        if (rect.width > 0 && rect.height > 0 && centerY >= 0 && centerY <= window.innerHeight) {
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(centerY) };
+        }
+      }
+      return null;
+    })();`
+  ).catch(() => null);
+
+  if (guestBounds && typeof guestBounds.x === "number" && typeof guestBounds.y === "number") {
+    const webviewOffset = await page.evaluate(() => {
+      const webview = document.querySelector(".browser-webview.is-active");
+      if (!webview) return { x: 0, y: 0 };
+      const rect = webview.getBoundingClientRect();
+      return { x: Math.round(rect.left), y: Math.round(rect.top) };
+    });
+    const hostPoint = {
+      x: webviewOffset.x + guestBounds.x,
+      y: webviewOffset.y + guestBounds.y
+    };
+    return app.evaluate(
+      async ({ BrowserWindow }, clickPoint) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        if (!window) return { ok: false, reason: "BrowserWindow not found" };
+        window.webContents.focus();
+        window.webContents.sendInputEvent({ type: "mouseMove", x: clickPoint.x, y: clickPoint.y });
+        window.webContents.sendInputEvent({ type: "mouseDown", x: clickPoint.x, y: clickPoint.y, button: "left", clickCount: 1 });
+        window.webContents.sendInputEvent({ type: "mouseUp", x: clickPoint.x, y: clickPoint.y, button: "left", clickCount: 1 });
+        return { ok: true, method: "guest-bounds-click", x: clickPoint.x, y: clickPoint.y };
+      },
+      hostPoint
+    );
+  }
+
+  // Fallback: fixed viewport-ratio click (diagnostic path).
   const size = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const ratios = {
     preview: { x: 0.666, y: 0.958 },
@@ -85,7 +127,7 @@ async function clickVisibleAgwaAction(app, page, action) {
       window.webContents.sendInputEvent({ type: "mouseMove", x: clickPoint.x, y: clickPoint.y });
       window.webContents.sendInputEvent({ type: "mouseDown", x: clickPoint.x, y: clickPoint.y, button: "left", clickCount: 1 });
       window.webContents.sendInputEvent({ type: "mouseUp", x: clickPoint.x, y: clickPoint.y, button: "left", clickCount: 1 });
-      return { ok: true, method: "host-coordinate-click", x: clickPoint.x, y: clickPoint.y, guestUrl: guest?.getURL() || "" };
+      return { ok: true, method: "host-coordinate-fallback", x: clickPoint.x, y: clickPoint.y, guestUrl: guest?.getURL() || "" };
     },
     hostPoint
   );

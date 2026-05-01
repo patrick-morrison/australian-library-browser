@@ -1221,6 +1221,11 @@
               background: #286f88 !important;
               color: #ffffff !important;
             }
+            .\${actionClass}.agwa-card-actions .collect.saved {
+              background: #2f6b57 !important;
+              color: #f6f3ee !important;
+              font-weight: 700 !important;
+            }
             .\${actionClass}.agwa-card-actions .ignore {
               background: rgba(255, 255, 255, 0.12) !important;
               color: #eef2f4 !important;
@@ -1486,11 +1491,18 @@
         apply();
         if (!window.__troveLibraryObserver) {
           window.__troveLibraryObserver = new MutationObserver(() => {
-            try {
-              window[stateKey]?.apply?.();
-            } catch {
-              // Ignore pages that mutate while site scripts are still settling.
+            if (pageState.applyScheduled) {
+              return;
             }
+            pageState.applyScheduled = true;
+            setTimeout(() => {
+              pageState.applyScheduled = false;
+              try {
+                window[stateKey]?.apply?.();
+              } catch {
+                // Ignore pages that mutate while site scripts are still settling.
+              }
+            }, 100);
           });
           window.__troveLibraryObserver.observe(document.documentElement, { childList: true, subtree: true });
         }

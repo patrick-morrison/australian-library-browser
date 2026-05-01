@@ -30,6 +30,8 @@
     "inspect:pages": "node scripts/inspect-pages.js",
     "open:tabs": "node scripts/open-tabs-cli.js",
     "debug:inline": "node scripts/debug-inline-actions.js",
+    "diagnose:agwa": "node scripts/diagnose-agwa.js",
+    "diagnose:agwa-explore": "node scripts/diagnose-agwa-explore.js",
     "profile:flow": "node scripts/profile-collection-flow.js",
     "profile:search": "node scripts/profile-rapid-search.js",
     "probe:source": "node scripts/probe-source.js",

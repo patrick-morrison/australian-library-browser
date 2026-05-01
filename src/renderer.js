@@ -3512,7 +3512,7 @@ function scheduleSearchListLoadingSettle(tab) {
     }
     tab.url = currentUrl;
     try {
-      if (typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
+      if (!tab.didDomReady && typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
         tab.webview.stop();
       }
     } catch {
@@ -3536,7 +3536,7 @@ function settleSearchListLoadingTab(tab) {
   }
   tab.url = currentUrl;
   try {
-    if (typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
+    if (!tab.didDomReady && typeof tab.webview.isLoading === "function" && tab.webview.isLoading()) {
       tab.webview.stop();
     }
   } catch {
@@ -3808,6 +3808,9 @@ function scheduleWebviewResponsivenessProbe(tab) {
     if (!tab.webview?.isConnected) {
       return;
     }
+    if (!tab.didDomReady) {
+      return;
+    }
     const currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
     if (!isKnownSearchOrListUrl(currentUrl)) {
       return;
@@ -3844,6 +3847,9 @@ function scheduleSearchInlineActionProbe(tab) {
   }
   setTimeout(async () => {
     if (!tab.webview?.isConnected) {
+      return;
+    }
+    if (!tab.didDomReady) {
       return;
     }
     const currentUrl = ensureUrl(tab.webview.getURL?.() || tab.url || "");
@@ -4521,8 +4527,10 @@ async function applyProjectDecorations() {
       return;
     }
     const payload = sourceRegistry.projectStatePayload(project);
-    await safeExecuteJavaScript(activeTab, sourceRegistry.buildDecorationScript(payload), true, null);
-    activeTab.decorationSignature = signature;
+    const ran = await safeExecuteJavaScript(activeTab, sourceRegistry.buildDecorationScript(payload), true, null);
+    if (ran !== null) {
+      activeTab.decorationSignature = signature;
+    }
   } catch {
     // Ignore pages that reject script execution during navigation.
   }
