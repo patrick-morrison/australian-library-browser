@@ -694,6 +694,7 @@ app.whenReady().then(() => {
   ipcMain.handle("files:read-text", async (_event, targetPath) => fs.readFile(targetPath, "utf8"));
   ipcMain.handle("files:read-bytes", async (_event, targetPath) => Array.from(await fs.readFile(targetPath)));
   ipcMain.handle("shell:open-path", async (_event, targetPath) => shell.openPath(targetPath));
+  ipcMain.handle("shell:show-item-in-folder", async (_event, targetPath) => shell.showItemInFolder(targetPath));
   ipcMain.handle("shell:open-terminal", async (_event, targetPath) => openTerminalAtPath(targetPath));
   ipcMain.handle("shell:open-external", async (_event, targetUrl) => shell.openExternal(targetUrl));
   ipcMain.handle("clipboard:write-text", async (_event, value) => {

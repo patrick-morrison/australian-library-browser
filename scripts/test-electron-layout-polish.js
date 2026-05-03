@@ -19,6 +19,24 @@ async function run() {
     await page.waitForSelector("#mode-manage");
     project = await createProject(page, projectName);
 
+    await page.evaluate(() => {
+      const savedSearchesButton = document.querySelector("#saved-searches-button");
+      const addressInput = document.querySelector("#address-input");
+      if (savedSearchesButton) {
+        savedSearchesButton.textContent = "Searches (12)";
+      }
+      if (addressInput instanceof HTMLInputElement) {
+        addressInput.value = "https://trove.nla.gov.au/newspaper/article/58768300";
+      }
+    });
+    await page.setViewportSize({ width: 900, height: 720 });
+    await page.waitForTimeout(200);
+    let layout = await page.evaluate(() => window.trovePerf.layout());
+    if (!layout.ok) {
+      throw new Error(`Collect toolbar overflow at narrow size:\n${JSON.stringify(layout.issues, null, 2)}`);
+    }
+    const collectNarrowShot = await screenshot(page, "layout-polish-collect-toolbar-narrow.png");
+
     await page.click("#mode-manage");
     await page.waitForSelector("#manage-view:not([hidden])");
     await page.evaluate(() => {
@@ -52,7 +70,7 @@ async function run() {
 
     await page.setViewportSize({ width: 1180, height: 780 });
     await page.waitForTimeout(200);
-    let layout = await page.evaluate(() => window.trovePerf.layout());
+    layout = await page.evaluate(() => window.trovePerf.layout());
     if (!layout.ok) {
       throw new Error(`Layout overflow at desktop size:\n${JSON.stringify(layout.issues, null, 2)}`);
     }
@@ -71,7 +89,7 @@ async function run() {
         {
           projectName: project.projectName,
           projectDir: project.projectDir,
-          screenshots: [desktopShot, narrowShot]
+          screenshots: [collectNarrowShot, desktopShot, narrowShot]
         },
         null,
         2

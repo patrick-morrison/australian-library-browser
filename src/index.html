@@ -137,7 +137,7 @@
             <button id="save-search-button" type="button" class="ghost-button">Save</button>
             <div class="toolbar-searches">
               <button id="saved-searches-button" type="button" class="ghost-button" aria-haspopup="menu" aria-expanded="false">
-                Saved Searches
+                Searches
               </button>
               <div id="saved-searches-menu" class="saved-searches-menu" hidden></div>
             </div>
@@ -176,7 +176,7 @@
                 id="manage-search"
                 type="search"
                 class="manage-search"
-                placeholder="Filter titles, sources, or URLs"
+                placeholder="Full text, source, title, metadata, or URL"
                 spellcheck="false"
               >
               <div class="manage-filter" role="tablist" aria-label="Inventory filter">
@@ -188,8 +188,19 @@
               <div class="manage-filter" role="tablist" aria-label="Inventory layout">
                 <button id="layout-cards" type="button" class="filter-button is-active" data-layout="cards">Cards</button>
                 <button id="layout-compact" type="button" class="filter-button" data-layout="compact">Compact</button>
+                <button id="layout-gallery" type="button" class="filter-button" data-layout="gallery">Gallery</button>
+                <button id="layout-newspaper-calendar" type="button" class="filter-button" data-layout="newspaper-calendar">Newspaper Calendar</button>
               </div>
               <button id="open-items-csv" type="button" class="ghost-button" disabled>Open Native CSV</button>
+            </div>
+            <div id="manage-calendar-controls" class="manage-calendar-controls" hidden>
+              <span class="manage-calendar-controls-label">Newspaper browser</span>
+              <select id="manage-newspaper-filter" class="manage-facet-select" aria-label="Filter by newspaper">
+                <option value="">All newspapers</option>
+              </select>
+              <select id="manage-decade-filter" class="manage-facet-select" aria-label="Filter by decade">
+                <option value="">All decades</option>
+              </select>
             </div>
           </div>
           <div id="manage-list" class="manage-list empty-state">Select a project to manage its collected items.</div>
@@ -307,6 +318,13 @@
           <button id="project-context-hide" type="button" class="project-context-item">Close Library</button>
         </div>
 
+        <div id="library-item-context-menu" class="project-context-menu" hidden>
+          <button id="library-item-context-primary" type="button" class="project-context-item"></button>
+          <button id="library-item-context-detail" type="button" class="project-context-item">Open Detail</button>
+          <button id="library-item-context-native" type="button" class="project-context-item">Open in Finder</button>
+          <button id="library-item-context-page" type="button" class="project-context-item">Open Source Page</button>
+        </div>
+
         <div id="project-dialog" class="project-dialog" hidden>
           <div id="project-dialog-backdrop" class="project-dialog-backdrop"></div>
           <form id="project-dialog-form" class="project-dialog-card">
@@ -367,6 +385,7 @@
           </div>
         </div>
         <div class="manage-item-actions">
+          <button type="button" class="secondary-action manage-primary-action" hidden></button>
           <button type="button" class="ghost-button manage-open-page">Open In App</button>
           <button type="button" class="ghost-button manage-open-file">Open Native File</button>
         </div>

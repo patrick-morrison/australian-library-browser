@@ -56,6 +56,33 @@ async function testDuplicateNewspaperSave(rootDir) {
   assert((projectData.saved || []).length === 1, "duplicate newspaper save should keep one saved entry");
 }
 
+async function testNewspaperMetadataIsStructured(rootDir) {
+  const project = await projectStore.createProject(rootDir, "Structured Newspaper Metadata");
+  const item = {
+    source: "trove",
+    sourceLabel: "Trove",
+    type: "newspaper",
+    id: "13579",
+    title: "Structured Metadata Article",
+    url: "https://trove.nla.gov.au/newspaper/article/13579",
+    aliases: ["https://trove.nla.gov.au/newspaper/article/13579"],
+    citation: "The Test Times (Perth, WA), Friday 9 August 1935, page 4",
+    description: "Synthetic description",
+    fullText: "Synthetic full text"
+  };
+
+  await projectStore.saveItem(project.path, item);
+  await projectStore.uncollectItem(project.path, item);
+
+  const projectData = await readProject(project.path);
+  const uncollected = projectData.uncollected?.[0] || {};
+  assert(uncollected.newspaperTitle === "The Test Times", `expected newspaper title, got ${uncollected.newspaperTitle}`);
+  assert(uncollected.publicationDate === "9 August 1935", `expected publication date, got ${uncollected.publicationDate}`);
+  assert(uncollected.publicationYear === 1935, `expected publication year, got ${uncollected.publicationYear}`);
+  assert(uncollected.publicationDecade === "1930s", `expected publication decade, got ${uncollected.publicationDecade}`);
+  assert(uncollected.publicationPage === "4", `expected publication page, got ${uncollected.publicationPage}`);
+}
+
 async function testDuplicateImageSave(rootDir) {
   const project = await projectStore.createProject(rootDir, "Duplicate Image");
   const originalFetch = global.fetch;
@@ -208,6 +235,7 @@ async function main() {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "australian-library-browser-store-"));
   try {
     await testDuplicateNewspaperSave(rootDir);
+    await testNewspaperMetadataIsStructured(rootDir);
     await testDuplicateImageSave(rootDir);
     await testIgnoreRemovesSavedFiles(rootDir);
     await testUncollectRemovesSavedEntry(rootDir);

@@ -11,11 +11,15 @@ const state = {
   selectedProjectDirectory: "",
   projectSearches: [],
   savedSearchMenuOpen: false,
+  libraryItemContextKey: "",
   mode: "collect",
   manageFilter: "saved",
   manageQuery: "",
   manageLayout: "compact",
   manageExpandedKey: "",
+  manageDetailKey: "",
+  manageNewspaperFilter: "",
+  manageDecadeFilter: "",
   debugOpen: false,
   captureRequestId: 0,
   sidebarWidth: 360,
@@ -57,6 +61,11 @@ const elements = {
   projectContextOpenFolder: document.getElementById("project-context-open-folder"),
   projectContextOpenTerminal: document.getElementById("project-context-open-terminal"),
   projectContextHide: document.getElementById("project-context-hide"),
+  libraryItemContextMenu: document.getElementById("library-item-context-menu"),
+  libraryItemContextPrimary: document.getElementById("library-item-context-primary"),
+  libraryItemContextDetail: document.getElementById("library-item-context-detail"),
+  libraryItemContextNative: document.getElementById("library-item-context-native"),
+  libraryItemContextPage: document.getElementById("library-item-context-page"),
   projectDetails: document.getElementById("project-details"),
   savedSearches: document.getElementById("saved-searches"),
   sourceList: document.getElementById("source-list"),
@@ -75,12 +84,17 @@ const elements = {
   manageSummary: document.getElementById("manage-summary"),
   manageList: document.getElementById("manage-list"),
   manageSearch: document.getElementById("manage-search"),
+  manageCalendarControls: document.getElementById("manage-calendar-controls"),
+  manageNewspaperFilter: document.getElementById("manage-newspaper-filter"),
+  manageDecadeFilter: document.getElementById("manage-decade-filter"),
   filterAll: document.getElementById("filter-all"),
   filterSaved: document.getElementById("filter-saved"),
   filterIgnored: document.getElementById("filter-ignored"),
   filterUncollected: document.getElementById("filter-uncollected"),
   layoutCards: document.getElementById("layout-cards"),
   layoutCompact: document.getElementById("layout-compact"),
+  layoutGallery: document.getElementById("layout-gallery"),
+  layoutNewspaperCalendar: document.getElementById("layout-newspaper-calendar"),
   openItemsCsv: document.getElementById("open-items-csv"),
   webviewStack: document.getElementById("webview-stack"),
   backButton: document.getElementById("back-button"),
@@ -698,7 +712,9 @@ function renderSavedSearchMenu() {
   }
 
   elements.savedSearchesButton.disabled = !project || !searches.length;
-  elements.savedSearchesButton.textContent = searches.length ? `Saved Searches (${searches.length})` : "Saved Searches";
+  elements.savedSearchesButton.textContent = searches.length ? `Searches (${searches.length})` : "Searches";
+  elements.savedSearchesButton.title = searches.length ? `${searches.length} saved searches` : "Saved searches";
+  elements.savedSearchesButton.setAttribute("aria-label", searches.length ? `${searches.length} saved searches` : "Saved searches");
 
   if (!project) {
     elements.savedSearchesMenu.innerHTML = '<div class="saved-searches-menu-empty">Select a library first.</div>';
@@ -2589,6 +2605,326 @@ function formatInventoryStatus(status) {
   return "Item";
 }
 
+function getInventoryItemSearchText(item) {
+  return [
+    item.title,
+    item.url,
+    item.canonicalUrl,
+    ...(Array.isArray(item.aliases) ? item.aliases : []),
+    item.sourceLabel,
+    item.source,
+    item.type,
+    item.citation,
+    item.description,
+    item.sourceTitle,
+    item.newspaperTitle,
+    item.publicationDate,
+    item.publicationYear,
+    item.publicationDecade,
+    item.publicationPage,
+    item.fullText,
+    item.rawMetadata,
+    ...(Array.isArray(item.metadataFields)
+      ? item.metadataFields.map((field) => `${field.label || ""} ${field.value || ""}`)
+      : []),
+    summarizeNativeRecord(item)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+async function getInventoryItemSearchTextForFilter(project, item) {
+  const baseText = getInventoryItemSearchText(item);
+  const markdownPath = resolveItemMarkdownPath(project, item);
+  if (!markdownPath) {
+    return baseText;
+  }
+  try {
+    const markdown = await window.troveApi.readTextFile(markdownPath);
+    return `${baseText} ${String(markdown || "").toLowerCase()}`;
+  } catch {
+    return baseText;
+  }
+}
+
+async function filterProjectInventory(project, inventory, query, renderToken) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return inventory;
+  }
+
+  const results = await Promise.all(
+    inventory.map(async (item) => ({
+      item,
+      searchText: await getInventoryItemSearchTextForFilter(project, item)
+    }))
+  );
+  if (renderToken !== state.manageRenderToken) {
+    return [];
+  }
+  return results.filter((entry) => entry.searchText.includes(normalizedQuery)).map((entry) => entry.item);
+}
+
+function isTroveNewspaperItem(item) {
+  return item?.source === "trove" && item?.type === "newspaper" && /\/newspaper\/article\/\d+/i.test(item.url || "");
+}
+
+function isImageInventoryItem(item) {
+  return item?.type === "image";
+}
+
+function isGalleryInventoryItem(item) {
+  return isImageInventoryItem(item) && Boolean(getManageItemImageSource(item));
+}
+
+function extractInventoryDateText(item) {
+  const fields = Array.isArray(item?.metadataFields) ? item.metadataFields : [];
+  const labelledDate = fields.find((field) => /\b(date|published|publication)\b/i.test(field.label || ""))?.value || "";
+  return [item?.publicationDate, item?.publicationYear, labelledDate, item?.citation, item?.sourceTitle, item?.title].filter(Boolean).join(" ");
+}
+
+function getNewspaperCalendarDate(item) {
+  const text = extractInventoryDateText(item);
+  const monthNames = "January|February|March|April|May|June|July|August|September|October|November|December";
+  const dayMonthYear = text.match(new RegExp(`\\b(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4})\\b`, "i"));
+  if (dayMonthYear) {
+    const parsed = new Date(`${dayMonthYear[2]} ${dayMonthYear[1]}, ${dayMonthYear[3]}`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  const monthYear = text.match(new RegExp(`\\b(${monthNames})\\s+(\\d{4})\\b`, "i"));
+  if (monthYear) {
+    const parsed = new Date(`${monthYear[1]} 1, ${monthYear[2]}`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  const year = text.match(/\b(18\d{2}|19\d{2}|20\d{2})\b/);
+  if (year) {
+    return new Date(`${year[1]}-01-01T00:00:00Z`);
+  }
+
+  return null;
+}
+
+function formatCalendarDay(date) {
+  if (!date) {
+    return "Undated";
+  }
+  return date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
+function formatCalendarMonth(date) {
+  if (!date) {
+    return "Undated";
+  }
+  return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function getCalendarMonthKey(date) {
+  if (!date) {
+    return "undated";
+  }
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getCalendarYearKey(date) {
+  return date ? String(date.getFullYear()) : "undated";
+}
+
+function getCalendarDecadeKey(date) {
+  if (!date) {
+    return "undated";
+  }
+  return `${Math.floor(date.getFullYear() / 10) * 10}s`;
+}
+
+function getCalendarSummary(entries) {
+  const dated = entries.filter((entry) => entry.date);
+  const years = new Set(dated.map((entry) => getCalendarYearKey(entry.date)));
+  const decades = new Set(dated.map((entry) => getCalendarDecadeKey(entry.date)));
+  const sources = new Set(entries.map((entry) => getCalendarDisplaySource(entry.item)).filter(Boolean));
+  const range = dated.length
+    ? `${dated[0].date.getFullYear()}-${dated[dated.length - 1].date.getFullYear()}`
+    : "undated";
+  return { range, yearCount: years.size, decadeCount: decades.size, sourceCount: sources.size };
+}
+
+function getCalendarDisplaySource(item) {
+  if (item?.newspaperTitle) {
+    return item.newspaperTitle;
+  }
+  if (item?.sourceTitle) {
+    return item.sourceTitle;
+  }
+  const citationLead = String(item?.citation || "").split("(")[0].trim().replace(/[,.]+$/g, "");
+  return citationLead || item?.sourceLabel || item?.source || "";
+}
+
+function getCalendarSnippet(item) {
+  return item?.description || item?.fullText || item?.citation || item?.url || "";
+}
+
+function getItemNewspaperFacet(item) {
+  if (!isTroveNewspaperItem(item)) {
+    return "";
+  }
+  return getCalendarDisplaySource(item);
+}
+
+function getItemDecadeFacet(item) {
+  if (item?.publicationDecade) {
+    return String(item.publicationDecade);
+  }
+  const date = getNewspaperCalendarDate(item);
+  return getCalendarDecadeKey(date);
+}
+
+function setSelectOptions(select, options, activeValue, fallbackLabel) {
+  if (!select) {
+    return;
+  }
+  const values = ["", ...options];
+  select.innerHTML = values
+    .map((value) => {
+      const label = value || fallbackLabel;
+      return `<option value="${escapeHtml(value)}"${value === activeValue ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function updateManageFacetControls(items) {
+  if (elements.manageCalendarControls) {
+    elements.manageCalendarControls.hidden = !getActiveProject() || state.manageLayout !== "newspaper-calendar";
+  }
+  const newspaperOptions = [
+    ...new Set(items.map(getItemNewspaperFacet).filter(Boolean))
+  ].sort((left, right) => left.localeCompare(right));
+  const decadeOptions = [
+    ...new Set(items.map(getItemDecadeFacet).filter((value) => value && value !== "undated"))
+  ].sort((left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10));
+  if (state.manageNewspaperFilter && !newspaperOptions.includes(state.manageNewspaperFilter)) {
+    state.manageNewspaperFilter = "";
+  }
+  if (state.manageDecadeFilter && !decadeOptions.includes(state.manageDecadeFilter)) {
+    state.manageDecadeFilter = "";
+  }
+  setSelectOptions(elements.manageNewspaperFilter, newspaperOptions, state.manageNewspaperFilter, "All newspapers");
+  setSelectOptions(elements.manageDecadeFilter, decadeOptions, state.manageDecadeFilter, "All decades");
+  if (elements.manageNewspaperFilter) {
+    elements.manageNewspaperFilter.disabled = !newspaperOptions.length;
+  }
+  if (elements.manageDecadeFilter) {
+    elements.manageDecadeFilter.disabled = !decadeOptions.length;
+  }
+}
+
+function getManageDetailItem(inventory) {
+  if (!state.manageDetailKey) {
+    return null;
+  }
+  return inventory.find((item) => getInventoryItemKey(item) === state.manageDetailKey) || null;
+}
+
+function openManageDetail(item) {
+  state.manageDetailKey = getInventoryItemKey(item);
+  const project = getActiveProject();
+  if (project) {
+    void renderManageDetailModal(project, item, state.manageRenderToken);
+  }
+}
+
+function closeManageDetailModal() {
+  state.manageDetailKey = "";
+  document.querySelector(".manage-detail-modal")?.remove();
+}
+
+function getPreviewAttachmentCount() {
+  const item = getDisplayedItem();
+  if (item?.type !== "image") {
+    return 0;
+  }
+  return getItemAttachments(item).length;
+}
+
+function canNavigatePreviewImages(event) {
+  if (state.mode !== "collect" || isTextEditableTarget(event.target)) {
+    return false;
+  }
+  if (
+    previewState.findOpen ||
+    pageFindState.open ||
+    state.savedSearchMenuOpen ||
+    state.queueTrayOpen ||
+    !elements.projectDialog.hidden ||
+    !elements.troveLinkDialog.hidden ||
+    !elements.projectContextMenu.hidden ||
+    !elements.imageLightbox.hidden ||
+    !elements.debugDrawer.hidden
+  ) {
+    return false;
+  }
+  return getPreviewAttachmentCount() > 1;
+}
+
+function setPreviewImageIndex(nextIndex) {
+  const item = getDisplayedItem();
+  const attachmentCount = getPreviewAttachmentCount();
+  if (!item || attachmentCount < 2) {
+    return;
+  }
+  const normalizedIndex = ((nextIndex % attachmentCount) + attachmentCount) % attachmentCount;
+  previewState.imageIndex = normalizedIndex;
+  renderCapturePane(item, getDisplayedMarkdown(), { origin: previewState.origin });
+  void hydratePreviewAttachmentAtIndex(normalizedIndex).then(() => {
+    if (getDisplayedItem()) {
+      renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
+    }
+  });
+}
+
+function movePreviewImage(delta) {
+  setPreviewImageIndex((previewState.imageIndex || 0) + delta);
+}
+
+function getManagePrimaryAction(item) {
+  if (item.status === "saved") {
+    return { action: "uncollect", label: "Uncollect", tone: "warning" };
+  }
+  if (item.status === "uncollected") {
+    return { action: "collect", label: "Recollect", tone: "saved" };
+  }
+  if (item.status === "ignored") {
+    return { action: "unignore", label: "Unignore", tone: "neutral" };
+  }
+  return null;
+}
+
+function runManagePrimaryAction(item) {
+  const project = getActiveProject();
+  const primary = getManagePrimaryAction(item);
+  if (!project || !primary) {
+    return;
+  }
+  if (primary.action === "uncollect") {
+    const confirmed = window.confirm(`Delete this collected record from the library?\n\n${item.title}`);
+    if (!confirmed) {
+      return;
+    }
+  }
+  const actionTarget = primary.action === "collect" && item.status === "uncollected" ? item.url : item;
+  const queued = queueProjectAction(primary.action, project.path, actionTarget, { source: "library" });
+  if (queued) {
+    state.manageDetailKey = primary.action === "uncollect" ? "" : state.manageDetailKey;
+    setMessage(`${describeBusyAction(primary.action)} queued.`);
+    void renderManageList();
+  }
+}
+
 async function populateManageCard(card, project, item, renderToken) {
   const imageWrap = card.querySelector(".manage-item-image-wrap");
   const imageNode = card.querySelector(".manage-item-image");
@@ -2629,6 +2965,8 @@ function bindManageCardActions(card, project, item) {
   const localTargets = resolveItemLocalTargets(project, item);
   const openPage = card.querySelector(".manage-open-page");
   const openFile = card.querySelector(".manage-open-file");
+  const primaryAction = card.querySelector(".manage-primary-action");
+  const primary = getManagePrimaryAction(item);
   if (openPage) {
     openPage.addEventListener("click", () => {
       void openItemInApp(item);
@@ -2642,6 +2980,21 @@ function bindManageCardActions(card, project, item) {
       }
       await window.troveApi.openPath(localTargets[0]);
     });
+  }
+  if (primaryAction) {
+    if (primary) {
+      primaryAction.textContent = primary.label;
+      primaryAction.classList.toggle("is-warning-action", primary.tone === "warning");
+      primaryAction.classList.toggle("is-saved-action", primary.tone === "saved");
+      primaryAction.classList.toggle("is-neutral-action", primary.tone === "neutral");
+      primaryAction.hidden = false;
+      primaryAction.addEventListener("click", (event) => {
+        event.stopPropagation();
+        runManagePrimaryAction(item);
+      });
+    } else {
+      primaryAction.hidden = true;
+    }
   }
 }
 
@@ -2689,6 +3042,10 @@ async function renderManageCompactList(project, inventory, renderToken) {
       state.manageExpandedKey = state.manageExpandedKey === itemKey ? "" : itemKey;
       void renderManageList();
     });
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openLibraryItemContextMenu(event.clientX, event.clientY, item, row);
+    });
 
     if (itemKey === activeExpandedKey) {
       const detail = document.createElement("div");
@@ -2710,6 +3067,217 @@ async function renderManageCompactList(project, inventory, renderToken) {
   }
 
   elements.manageList.append(table);
+}
+
+async function renderManageDetailPage(project, item, renderToken, container = elements.manageList) {
+  const detail = document.createElement("article");
+  detail.className = "manage-detail-page";
+  const title = escapeHtml(item.title || "Untitled item");
+  const source = escapeHtml(item.sourceLabel || item.source || "Unknown source");
+  const status = escapeHtml(formatInventoryStatus(item.status));
+  const updated = escapeHtml(formatDate(item.timestamp || item.savedAt || item.ignoredAt || item.uncollectedAt || ""));
+  const imageSource = getManageItemImageSource(item);
+  const fields = [
+    ["Source", item.sourceLabel || item.source],
+    ["Type", item.type],
+    ["Status", formatInventoryStatus(item.status)],
+    ["Record ID", item.id],
+    ["Citation", item.citation],
+    ["Collection", item.sourceTitle],
+    ["Newspaper", item.newspaperTitle],
+    ["Publication date", item.publicationDate],
+    ["Decade", item.publicationDecade],
+    ["Page", item.publicationPage],
+    ["URL", item.url],
+    ["Saved", item.savedAt],
+    ["Ignored", item.ignoredAt],
+    ["Uncollected", item.uncollectedAt],
+    ...(Array.isArray(item.metadataFields) ? item.metadataFields.map((field) => [field.label, field.value]) : [])
+  ].filter(([, value]) => value);
+
+  detail.innerHTML = `
+    <div class="manage-detail-head">
+      <button type="button" class="ghost-button manage-detail-back">Close</button>
+      <div class="manage-detail-title">
+        <span class="recent-type">${status}</span>
+        <h3>${title}</h3>
+        <p>${source}${updated ? ` · ${updated}` : ""}</p>
+      </div>
+      <div class="manage-item-actions">
+        <button type="button" class="secondary-action manage-primary-action"></button>
+        <button type="button" class="ghost-button manage-open-page">Open In App</button>
+        <button type="button" class="ghost-button manage-open-file">Open Native File</button>
+      </div>
+    </div>
+    ${
+      imageSource
+        ? `<button type="button" class="manage-detail-image-button" aria-label="Open image preview"><img src="${escapeHtml(imageSource)}" alt="${title}"></button>`
+        : ""
+    }
+    <div class="manage-detail-grid">
+      <section class="manage-detail-section">
+        <h4>Metadata</h4>
+        <dl class="manage-detail-metadata">
+          ${fields
+            .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+            .join("")}
+        </dl>
+      </section>
+      <section class="manage-detail-section manage-detail-content">
+        <h4>Content</h4>
+        <div class="manage-item-markdown">Loading content…</div>
+      </section>
+    </div>
+  `;
+
+  detail.querySelector(".manage-detail-back")?.addEventListener("click", () => {
+    closeManageDetailModal();
+  });
+  detail.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openLibraryItemContextMenu(event.clientX, event.clientY, item, detail);
+  });
+  const imageButton = detail.querySelector(".manage-detail-image-button");
+  imageButton?.addEventListener("click", () => openImageLightbox(imageSource, item.title || ""));
+  bindManageCardActions(detail, project, item);
+  container.append(detail);
+
+  try {
+    const markdown = await loadManageItemMarkdown(project, item);
+    if (renderToken !== state.manageRenderToken || state.manageDetailKey !== getInventoryItemKey(item)) {
+      return;
+    }
+    detail.querySelector(".manage-item-markdown").innerHTML = renderMarkdownHtml(markdown);
+  } catch {
+    if (renderToken !== state.manageRenderToken) {
+      return;
+    }
+    detail.querySelector(".manage-item-markdown").textContent = "Content preview unavailable.";
+  }
+}
+
+async function renderManageDetailModal(project, item, renderToken) {
+  document.querySelector(".manage-detail-modal")?.remove();
+  if (!project || !item) {
+    return;
+  }
+
+  const modal = document.createElement("div");
+  modal.className = "manage-detail-modal";
+  modal.innerHTML = `
+    <div class="manage-detail-backdrop" aria-hidden="true"></div>
+    <div class="manage-detail-dialog" role="dialog" aria-modal="true" aria-label="Library item detail"></div>
+  `;
+  modal.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+  modal.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  modal.querySelector(".manage-detail-backdrop")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeManageDetailModal();
+  });
+  document.body.append(modal);
+  await renderManageDetailPage(project, item, renderToken, modal.querySelector(".manage-detail-dialog"));
+}
+
+function renderManageGallery(project, inventory) {
+  const galleryItems = inventory.filter(isGalleryInventoryItem);
+  elements.manageSummary.textContent = `${galleryItems.length} image${galleryItems.length === 1 ? "" : "s"}`;
+  if (!galleryItems.length) {
+    elements.manageList.className = "manage-list empty-state";
+    elements.manageList.textContent = "No images in this filter yet.";
+    return;
+  }
+
+  elements.manageList.className = "manage-list manage-gallery";
+  for (const item of galleryItems) {
+    const imageSource = getManageItemImageSource(item);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "manage-gallery-tile";
+    button.innerHTML = `
+      <span class="manage-gallery-image">${imageSource ? `<img src="${escapeHtml(imageSource)}" alt="">` : ""}</span>
+      <span class="manage-gallery-title">${escapeHtml(item.title || "Untitled image")}</span>
+      <span class="manage-gallery-meta">${escapeHtml(item.sourceLabel || item.source || "")}</span>
+    `;
+    button.addEventListener("click", () => openManageDetail(item));
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openLibraryItemContextMenu(event.clientX, event.clientY, item, button);
+    });
+    elements.manageList.append(button);
+  }
+}
+
+function renderManageNewspaperCalendar(project, inventory) {
+  const newspaperItems = inventory.filter(isTroveNewspaperItem).map((item) => ({
+    item,
+    date: getNewspaperCalendarDate(item)
+  }));
+  newspaperItems.sort((left, right) => {
+    if (!left.date && !right.date) {
+      return String(left.item.title || "").localeCompare(String(right.item.title || ""));
+    }
+    if (!left.date) {
+      return 1;
+    }
+    if (!right.date) {
+      return -1;
+    }
+    return left.date.getTime() - right.date.getTime();
+  });
+  const summary = getCalendarSummary(newspaperItems);
+  elements.manageSummary.textContent = `${newspaperItems.length} Trove article${newspaperItems.length === 1 ? "" : "s"}`;
+  if (!newspaperItems.length) {
+    elements.manageList.className = "manage-list empty-state";
+    elements.manageList.textContent = "No Trove newspaper articles in this filter yet.";
+    return;
+  }
+
+  elements.manageList.className = "manage-list manage-calendar";
+  const overview = document.createElement("div");
+  overview.className = "manage-calendar-overview";
+  overview.innerHTML = `
+    <span>${escapeHtml(summary.range)}</span>
+    <span>${summary.yearCount} year${summary.yearCount === 1 ? "" : "s"}</span>
+    <span>${summary.decadeCount} decade${summary.decadeCount === 1 ? "" : "s"}</span>
+    <span>${summary.sourceCount} source${summary.sourceCount === 1 ? "" : "s"}</span>
+  `;
+  elements.manageList.append(overview);
+  let currentMonth = "";
+  for (const entry of newspaperItems) {
+    const monthKey = getCalendarMonthKey(entry.date);
+    if (monthKey !== currentMonth) {
+      currentMonth = monthKey;
+      const month = document.createElement("h3");
+      month.className = "manage-calendar-month";
+      month.textContent = formatCalendarMonth(entry.date);
+      elements.manageList.append(month);
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "manage-calendar-entry";
+    const source = getCalendarDisplaySource(entry.item);
+    button.innerHTML = `
+      <span class="manage-calendar-date">
+        ${escapeHtml(formatCalendarDay(entry.date))}
+      </span>
+      <span class="manage-calendar-newspaper">${escapeHtml(source)}</span>
+      <span class="manage-calendar-title">
+        <strong>${escapeHtml(entry.item.title || "Untitled article")}</strong>
+      </span>
+    `;
+    button.addEventListener("click", () => openManageDetail(entry.item));
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openLibraryItemContextMenu(event.clientX, event.clientY, entry.item, button);
+    });
+    elements.manageList.append(button);
+  }
 }
 
 async function openItemInApp(item) {
@@ -3015,11 +3583,17 @@ function resetManageDefaults() {
   state.manageLayout = "compact";
   state.manageQuery = "";
   state.manageExpandedKey = "";
+  state.manageDetailKey = "";
+  state.manageNewspaperFilter = "";
+  state.manageDecadeFilter = "";
+  document.querySelector(".manage-detail-modal")?.remove();
 }
 
 function setMode(mode) {
   if (mode === "manage") {
     resetManageDefaults();
+  } else {
+    closeManageDetailModal();
   }
   state.mode = mode;
   closeProjectContextMenu();
@@ -4367,15 +4941,53 @@ function closeProjectContextMenu() {
   document.querySelector(".project-card.is-context-target")?.classList.remove("is-context-target");
 }
 
+function getLibraryContextItem() {
+  const project = getActiveProject();
+  if (!project || !state.libraryItemContextKey) {
+    return null;
+  }
+  return getProjectInventory(project).find((item) => getInventoryItemKey(item) === state.libraryItemContextKey) || null;
+}
+
+function closeLibraryItemContextMenu() {
+  elements.libraryItemContextMenu.hidden = true;
+  state.libraryItemContextKey = "";
+  document.querySelector(".is-library-context-target")?.classList.remove("is-library-context-target");
+}
+
+function positionContextMenu(menu, x, y) {
+  const maxLeft = window.innerWidth - menu.offsetWidth - 12;
+  const maxTop = window.innerHeight - menu.offsetHeight - 12;
+  menu.style.left = `${Math.max(12, Math.min(x, maxLeft))}px`;
+  menu.style.top = `${Math.max(12, Math.min(y, maxTop))}px`;
+}
+
 function openProjectContextMenu(x, y, projectPath, targetButton) {
+  closeLibraryItemContextMenu();
   state.projectContextPath = projectPath;
   document.querySelector(".project-card.is-context-target")?.classList.remove("is-context-target");
   targetButton.classList.add("is-context-target");
   elements.projectContextMenu.hidden = false;
-  const maxLeft = window.innerWidth - elements.projectContextMenu.offsetWidth - 12;
-  const maxTop = window.innerHeight - elements.projectContextMenu.offsetHeight - 12;
-  elements.projectContextMenu.style.left = `${Math.max(12, Math.min(x, maxLeft))}px`;
-  elements.projectContextMenu.style.top = `${Math.max(12, Math.min(y, maxTop))}px`;
+  positionContextMenu(elements.projectContextMenu, x, y);
+}
+
+function openLibraryItemContextMenu(x, y, item, targetNode) {
+  if (!item) {
+    return;
+  }
+  closeProjectContextMenu();
+  state.libraryItemContextKey = getInventoryItemKey(item);
+  document.querySelector(".is-library-context-target")?.classList.remove("is-library-context-target");
+  targetNode?.classList?.add("is-library-context-target");
+  const primary = getManagePrimaryAction(item);
+  elements.libraryItemContextPrimary.hidden = !primary;
+  elements.libraryItemContextPrimary.textContent = primary?.label || "";
+  const localTargets = resolveItemLocalTargets(getActiveProject(), item);
+  elements.libraryItemContextNative.disabled = !localTargets.length;
+  elements.libraryItemContextNative.textContent = localTargets.length ? "Open in Finder" : "No local file";
+  elements.libraryItemContextPage.disabled = !item.url;
+  elements.libraryItemContextMenu.hidden = false;
+  positionContextMenu(elements.libraryItemContextMenu, x, y);
 }
 
 async function hideProjectFromPane(projectPath = state.projectContextPath) {
@@ -4414,34 +5026,40 @@ async function renderManageList() {
 
   if (!project) {
     elements.manageSummary.textContent = "0 items";
+    if (elements.manageCalendarControls) {
+      elements.manageCalendarControls.hidden = true;
+    }
+    closeManageDetailModal();
     elements.manageList.className = "manage-list empty-state";
     elements.manageList.textContent = "Select a project to manage its collected items.";
     return;
   }
 
-  const inventory = getProjectInventory(project).filter((item) => {
+  const statusInventory = getProjectInventory(project).filter((item) => {
     if (state.manageFilter === "all") {
       return true;
     }
     return item.status === state.manageFilter;
-  }).filter((item) => {
-    const query = state.manageQuery.trim().toLowerCase();
-    if (!query) {
-      return true;
-    }
-    const haystack = [
-      item.title,
-      item.url,
-      item.sourceLabel,
-      item.source,
-      item.type,
-      summarizeNativeRecord(item)
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(query);
   });
+  const queryInventory = await filterProjectInventory(project, statusInventory, state.manageQuery, renderToken);
+  if (renderToken !== state.manageRenderToken) {
+    return;
+  }
+  updateManageFacetControls(queryInventory);
+  const shouldApplyCalendarFacets = state.manageLayout === "newspaper-calendar";
+  const inventory = queryInventory.filter((item) => {
+    if (shouldApplyCalendarFacets && state.manageNewspaperFilter && getItemNewspaperFacet(item) !== state.manageNewspaperFilter) {
+      return false;
+    }
+    if (shouldApplyCalendarFacets && state.manageDecadeFilter && getItemDecadeFacet(item) !== state.manageDecadeFilter) {
+      return false;
+    }
+    return true;
+  });
+  const detailItem = getManageDetailItem(inventory);
+  if (!detailItem) {
+    closeManageDetailModal();
+  }
   const forceCompactLayout = inventory.length > 120 && state.manageLayout === "cards";
   const effectiveManageLayout = forceCompactLayout ? "compact" : state.manageLayout;
 
@@ -4451,6 +5069,8 @@ async function renderManageList() {
   elements.filterUncollected.classList.toggle("is-active", state.manageFilter === "uncollected");
   elements.layoutCards?.classList.toggle("is-active", effectiveManageLayout === "cards");
   elements.layoutCompact?.classList.toggle("is-active", effectiveManageLayout === "compact");
+  elements.layoutGallery?.classList.toggle("is-active", effectiveManageLayout === "gallery");
+  elements.layoutNewspaperCalendar?.classList.toggle("is-active", effectiveManageLayout === "newspaper-calendar");
   if (elements.layoutCards) {
     elements.layoutCards.disabled = forceCompactLayout;
     elements.layoutCards.title = forceCompactLayout
@@ -4475,6 +5095,23 @@ async function renderManageList() {
   elements.manageList.className = `manage-list${effectiveManageLayout === "compact" ? " is-compact" : ""}`;
   if (effectiveManageLayout === "compact") {
     await renderManageCompactList(project, inventory, renderToken);
+    if (detailItem) {
+      await renderManageDetailModal(project, detailItem, renderToken);
+    }
+    return;
+  }
+  if (effectiveManageLayout === "gallery") {
+    renderManageGallery(project, inventory);
+    if (detailItem) {
+      await renderManageDetailModal(project, detailItem, renderToken);
+    }
+    return;
+  }
+  if (effectiveManageLayout === "newspaper-calendar") {
+    renderManageNewspaperCalendar(project, inventory);
+    if (detailItem) {
+      await renderManageDetailModal(project, detailItem, renderToken);
+    }
     return;
   }
 
@@ -4485,6 +5122,10 @@ async function renderManageList() {
     card.classList.toggle("is-uncollected", item.status === "uncollected");
     card.classList.toggle("is-compact", state.manageLayout === "compact");
     bindManageCardActions(card, project, item);
+    card.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openLibraryItemContextMenu(event.clientX, event.clientY, item, card);
+    });
     card.addEventListener("click", (event) => {
       if (event.target.closest("button")) {
         return;
@@ -4493,6 +5134,9 @@ async function renderManageList() {
     });
     elements.manageList.append(fragment);
     void populateManageCard(card, project, item, renderToken);
+  }
+  if (detailItem) {
+    await renderManageDetailModal(project, detailItem, renderToken);
   }
 }
 
@@ -5480,6 +6124,13 @@ document.addEventListener("click", (event) => {
     closeProjectContextMenu();
   }
   if (
+    !elements.libraryItemContextMenu.hidden &&
+    event.target instanceof Element &&
+    !event.target.closest("#library-item-context-menu")
+  ) {
+    closeLibraryItemContextMenu();
+  }
+  if (
     state.queueTrayOpen &&
     event.target instanceof Element &&
     !event.target.closest("#queue-tray")
@@ -5501,13 +6152,7 @@ document.addEventListener("click", (event) => {
   if (previewImageTarget && getDisplayedItem()) {
     event.preventDefault();
     const nextIndex = Number.parseInt(previewImageTarget.getAttribute("data-preview-image-index") || "0", 10) || 0;
-    previewState.imageIndex = nextIndex;
-    renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
-    void hydratePreviewAttachmentAtIndex(nextIndex).then(() => {
-      if (getDisplayedItem()) {
-        renderCapturePane(getDisplayedItem(), getDisplayedMarkdown(), { origin: previewState.origin });
-      }
-    });
+    setPreviewImageIndex(nextIndex);
     return;
   }
 });
@@ -5656,30 +6301,59 @@ elements.modeManage.addEventListener("click", () => {
 elements.modePlugins.addEventListener("click", () => setMode("plugins"));
 elements.filterAll.addEventListener("click", () => {
   state.manageFilter = "all";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.filterSaved.addEventListener("click", () => {
   state.manageFilter = "saved";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.filterIgnored.addEventListener("click", () => {
   state.manageFilter = "ignored";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.filterUncollected.addEventListener("click", () => {
   state.manageFilter = "uncollected";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.layoutCards?.addEventListener("click", () => {
   state.manageLayout = "cards";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.layoutCompact?.addEventListener("click", () => {
   state.manageLayout = "compact";
+  state.manageDetailKey = "";
+  renderManageList();
+});
+elements.layoutGallery?.addEventListener("click", () => {
+  state.manageLayout = "gallery";
+  state.manageExpandedKey = "";
+  state.manageDetailKey = "";
+  renderManageList();
+});
+elements.layoutNewspaperCalendar?.addEventListener("click", () => {
+  state.manageLayout = "newspaper-calendar";
+  state.manageExpandedKey = "";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.manageSearch?.addEventListener("input", (event) => {
   state.manageQuery = event.target.value || "";
+  state.manageDetailKey = "";
+  renderManageList();
+});
+elements.manageNewspaperFilter?.addEventListener("change", (event) => {
+  state.manageNewspaperFilter = event.target.value || "";
+  state.manageDetailKey = "";
+  renderManageList();
+});
+elements.manageDecadeFilter?.addEventListener("change", (event) => {
+  state.manageDecadeFilter = event.target.value || "";
+  state.manageDetailKey = "";
   renderManageList();
 });
 elements.openItemsCsv.addEventListener("click", async () => {
@@ -5726,6 +6400,36 @@ elements.projectContextOpenTerminal.addEventListener("click", () => {
 });
 elements.projectContextHide.addEventListener("click", () => {
   void hideProjectFromPane();
+});
+elements.libraryItemContextPrimary?.addEventListener("click", () => {
+  const item = getLibraryContextItem();
+  closeLibraryItemContextMenu();
+  if (item) {
+    runManagePrimaryAction(item);
+  }
+});
+elements.libraryItemContextDetail?.addEventListener("click", () => {
+  const item = getLibraryContextItem();
+  closeLibraryItemContextMenu();
+  if (item) {
+    openManageDetail(item);
+  }
+});
+elements.libraryItemContextNative?.addEventListener("click", async () => {
+  const item = getLibraryContextItem();
+  const project = getActiveProject();
+  const localTargets = resolveItemLocalTargets(project, item);
+  closeLibraryItemContextMenu();
+  if (localTargets.length) {
+    await window.troveApi.showItemInFolder(localTargets[0]);
+  }
+});
+elements.libraryItemContextPage?.addEventListener("click", () => {
+  const item = getLibraryContextItem();
+  closeLibraryItemContextMenu();
+  if (item?.url) {
+    void openItemInApp(item);
+  }
 });
 
 elements.pluginSeedUrls.addEventListener("input", () => {
@@ -6050,6 +6754,18 @@ window.addEventListener("keydown", (event) => {
       return;
     }
   }
+  if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+    if (event.key === "ArrowLeft" && canNavigatePreviewImages(event)) {
+      event.preventDefault();
+      movePreviewImage(-1);
+      return;
+    }
+    if (event.key === "ArrowRight" && canNavigatePreviewImages(event)) {
+      event.preventDefault();
+      movePreviewImage(1);
+      return;
+    }
+  }
   if ((event.key === "Enter" || event.key === " ") && event.target instanceof Element) {
     const button = event.target.closest("button");
     if (button) {
@@ -6083,12 +6799,20 @@ window.addEventListener("keydown", (event) => {
     closeProjectContextMenu();
     return;
   }
-  if (state.queueTrayOpen) {
-    setQueueTrayOpen(false);
+  if (!elements.libraryItemContextMenu.hidden) {
+    closeLibraryItemContextMenu();
     return;
   }
   if (!elements.imageLightbox.hidden) {
     closeImageLightbox();
+    return;
+  }
+  if (document.querySelector(".manage-detail-modal")) {
+    closeManageDetailModal();
+    return;
+  }
+  if (state.queueTrayOpen) {
+    setQueueTrayOpen(false);
     return;
   }
   if (!elements.debugDrawer.hidden) {
