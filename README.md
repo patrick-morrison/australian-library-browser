@@ -23,9 +23,6 @@ Open the app, choose **Library**, then click **New Library**. Name it something 
 
 Switch to **Collect** and search Trove for `Wellington Dam` in Newspapers & Gazettes. Click **Save** on the toolbar once the search is useful. This records the search URL so you can come back to the exact result set later.
 
-If Trove shows its cultural advice dialog, dismiss it in Trove before continuing.
-
-![Wellington Dam Trove search](docs/screenshots/getting-started-wellington-search.png)
 
 ### 3. Preview, collect, ignore, or uncollect
 
@@ -170,4 +167,4 @@ With MCP, Codex can read saved markdown in a library, identify names, places, da
 Notes:
 
 - This repo does not ship downloaded research libraries or copied third-party page dumps.
-- The package is currently `UNLICENSED`.
+- The package is licensed under MIT.
