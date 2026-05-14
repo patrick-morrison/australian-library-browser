@@ -3329,6 +3329,7 @@ function getSupportedImportUrlPatterns() {
   return [
     /https?:\/\/trove\.nla\.gov\.au\/newspaper\/article\/\d+/i,
     /https?:\/\/trove\.nla\.gov\.au\/work\/\d+/i,
+    /https?:\/\/nla\.gov\.au\/nla\.obj-\d+(?:\/view)?/i,
     /https?:\/\/encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i,
     /https?:\/\/purl\.slwa\.wa\.gov\.au\/[a-z0-9_./-]+/i,
     /https?:\/\/catalogue\.slwa\.wa\.gov\.au\/record=b\d+~S\d+/i,

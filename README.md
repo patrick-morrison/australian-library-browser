@@ -129,6 +129,7 @@ npm start
 Common commands:
 
 ```bash
+npm run probe:source -- "https://nla.gov.au/nla.obj-4161786467/view"
 npm run test:fixtures
 npm run test:e2e:smoke
 npm run test:mcp
@@ -136,7 +137,7 @@ npm run dist
 npm run dist:mac
 ```
 
-For agent/debug harness notes, see [`docs/HARNESS.md`](docs/HARNESS.md).
+For agent/debug harness notes, start with [`AGENTS.md`](AGENTS.md), then [`docs/HARNESS.md`](docs/HARNESS.md) and [`docs/SOURCE_ADAPTER_PROMPT.md`](docs/SOURCE_ADAPTER_PROMPT.md).
 
 Open tabs from the CLI:
 

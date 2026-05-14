@@ -271,11 +271,12 @@ async function waitForPreview(page, kind, options = {}) {
         return markdown.length > 250 && /Link:/i.test(markdown) && (!expectedMarkdown || markdown.includes(expectedMarkdown));
       }
       if (expectKind === "image") {
+        const expectedImage = expectedImageSrc ? imageSrc.includes(expectedImageSrc) : /\.jpg/i.test(imageSrc);
         return (
           markdown.length > 120 &&
-          Boolean(image && image.naturalWidth > 300 && /\.jpg/i.test(imageSrc)) &&
+          Boolean(image && image.naturalWidth > 300 && expectedImage) &&
           (!expectedMarkdown || markdown.includes(expectedMarkdown)) &&
-          (!expectedImageSrc || imageSrc.includes(expectedImageSrc))
+          (!expectedImageSrc || expectedImage)
         );
       }
       return markdown.length > 100 && (!expectedMarkdown || markdown.includes(expectedMarkdown));

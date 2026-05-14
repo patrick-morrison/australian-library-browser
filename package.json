@@ -26,6 +26,7 @@
     "test:e2e:bulk-search": "node scripts/run-with-retry.js scripts/test-live-bulk-search-reversal.js 2",
     "test:e2e:live": "node scripts/run-with-retry.js scripts/test-live-swan-river-wrecks.js 2 && node scripts/run-with-retry.js scripts/test-live-wellington-dam-image-search.js 2 && node scripts/run-with-retry.js scripts/test-live-library-workflow.js 2 && node scripts/run-with-retry.js scripts/test-live-inline-sidebar-actions.js 2",
     "test:e2e:slwa-image": "node scripts/run-with-retry.js scripts/test-live-wellington-dam-images.js 2",
+    "test:e2e:nla-object": "node scripts/run-with-retry.js scripts/test-live-nla-object-viewer.js 2",
     "test:fixtures": "node scripts/test-source-fixtures.js",
     "test:audit-live": "node scripts/audit-live-projects.js",
     "inspect:pages": "node scripts/inspect-pages.js",

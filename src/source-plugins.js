@@ -45,6 +45,10 @@
         if (workMatch) {
           keys.push(`trove:work:${workMatch[1]}`);
         }
+        const objectMatch = pathname.match(/\/(nla\.obj-\d+)/i);
+        if (objectMatch) {
+          keys.push(`trove:nla-object:${objectMatch[1].toLowerCase()}`);
+        }
       }
 
       if (/^(purl|catalogue|encore)\.slwa\.wa\.gov\.au$/i.test(hostname)) {
@@ -174,6 +178,75 @@
           titleFromHeading ||
           helpers.pickMeta('meta[property="og:title"]', 'meta[name="twitter:title"]') ||
           document.title.replace(/\\s*-\\s*Trove$/i, "").trim();
+        if (location.hostname.toLowerCase() === "nla.gov.au" && /\\/nla\\.obj-\\d+(?:\\/|$)/i.test(location.pathname)) {
+          const scriptText = Array.from(document.scripts)
+            .map((script) => script.textContent || "")
+            .find((text) => /var\\s+work\\s*=\\s*JSON\\.parse\\(JSON\\.stringify\\(/.test(text)) || "";
+          let work = null;
+          const workMatch = scriptText.match(/var\\s+work\\s*=\\s*JSON\\.parse\\(JSON\\.stringify\\(([\\s\\S]*?)\\)\\);/);
+          if (workMatch) {
+            try {
+              work = JSON.parse(workMatch[1]);
+            } catch {
+              work = null;
+            }
+          }
+          const pid = helpers.cleanText(work?.pid || location.pathname.match(/\\/(nla\\.obj-\\d+)/i)?.[1] || "");
+          if (pid) {
+            const objectUrl = "https://nla.gov.au/" + pid;
+            const viewerUrl = objectUrl + "/view";
+            const imageUrl = objectUrl + "/image";
+            const thumbnailUrl = helpers.normalizeUrl(
+              helpers.pickMeta('meta[property="og:image"]', 'meta[property="og:image:url"]', 'meta[name="twitter:image"]') ||
+              objectUrl + "/representativeImage?wid=250"
+            );
+            const objectTitle = helpers.cleanText(work?.title || title || pid);
+            const metadataFields = [
+              ["Creator", work?.creator],
+              ["Created/Published", work?.startDate],
+              ["Publisher", work?.publisherName],
+              ["Form", work?.form],
+              ["Extent", work?.extent],
+              ["Access", work?.accessConditions],
+              ["Copyright", work?.copyrightPolicy],
+              ["Bib ID", work?.bibId]
+            ]
+              .map(([label, value]) => ({ label, value: helpers.cleanText(value || "") }))
+              .filter((field) => field.value);
+            return {
+              supported: true,
+              source: "trove",
+              sourceLabel: "Trove",
+              type: "image",
+              id: pid,
+              title: objectTitle,
+              url: objectUrl,
+              aliases: [objectUrl, viewerUrl, helpers.normalizeUrl(location.href), imageUrl, thumbnailUrl],
+              citation: objectTitle + ". National Library of Australia. " + objectUrl,
+              description: metadataFields.find((field) => field.label === "Extent")?.value || "",
+              fullText: "",
+              sourceTitle: work?.collection ? "National Library of Australia: " + work.collection : "National Library of Australia",
+              imageUrl,
+              imageUrls: [imageUrl],
+              viewerUrls: [viewerUrl],
+              attachments: [
+                helpers.normalizeAttachment({
+                  id: pid,
+                  title: objectTitle,
+                  viewerUrl,
+                  imageUrl,
+                  thumbnailUrl
+                })
+              ].filter(Boolean),
+              metadataFields,
+              rawMetadata: helpers.cleanText(JSON.stringify({
+                pid,
+                collection: work?.collection,
+                form: work?.form
+              })).slice(0, 4000)
+            };
+          }
+        }
         if (/\\/newspaper\\/article\\/\\d+/i.test(path)) {
           const citationTerms = Array.from(document.querySelectorAll(".detailsPanel dt"));
           const citationMap = {};
@@ -701,6 +774,7 @@
     return [
       /https?:\/\/trove\.nla\.gov\.au\/newspaper\/article\/\d+/i,
       /https?:\/\/trove\.nla\.gov\.au\/work\/\d+/i,
+      /https?:\/\/nla\.gov\.au\/nla\.obj-\d+(?:\/view)?/i,
       /https?:\/\/encore\.slwa\.wa\.gov\.au\/iii\/encore\/record\//i,
       /https?:\/\/purl\.slwa\.wa\.gov\.au\/[a-z0-9_./-]+/i,
       /https?:\/\/catalogue\.slwa\.wa\.gov\.au\/record=b\d+~S\d+/i,

@@ -16,6 +16,12 @@ const extractionFixtures = [
     expect: { supported: true, source: "trove", type: "newspaper" }
   },
   {
+    name: "nla-object-viewer",
+    file: "test/fixtures/nla-object-viewer.html",
+    url: "https://nla.gov.au/nla.obj-4161786467/view",
+    expect: { supported: true, source: "trove", type: "image" }
+  },
+  {
     name: "slwa-record",
     file: "test/fixtures/slwa-record.html",
     url: "https://encore.slwa.wa.gov.au/iii/encore/record/C__Rb3507773?lang=eng&suite=def",
