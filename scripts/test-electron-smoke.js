@@ -4,6 +4,7 @@ const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
 const { _electron: electron } = require("playwright");
+const { createElectronLaunchEnv } = require("./electron-launch-env");
 
 const repoRoot = path.resolve(__dirname, "..");
 const screenshotDir = path.join(repoRoot, "tmp", "e2e-live");
@@ -52,17 +53,18 @@ async function main() {
       executablePath: electronBinary,
       args: [repoRoot],
       cwd: repoRoot,
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: "",
+      env: createElectronLaunchEnv({
         AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
         AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR: userDataDir
-      }
+      })
     });
 
     const page = await app.firstWindow();
     await page.waitForSelector("#mode-manage");
     await page.click("#mode-manage");
+    await page.waitForFunction(() => document.querySelector(".app-shell")?.classList.contains("mode-manage"), null, {
+      timeout: 10000
+    });
     await page.click("#new-project-button");
     await page.waitForSelector("#project-dialog:not([hidden])");
     await page.fill("#project-dialog-name", projectName);

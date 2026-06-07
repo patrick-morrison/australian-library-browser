@@ -6,6 +6,7 @@ const path = require("path");
 
 const yaml = require("js-yaml");
 const { _electron: electron } = require("playwright");
+const { createElectronLaunchEnv } = require("./electron-launch-env");
 
 const repoRoot = path.resolve(__dirname, "..");
 const screenshotDir = path.join(repoRoot, "tmp", "e2e-live");
@@ -29,13 +30,11 @@ async function launchApp() {
     executablePath: electronBinary,
     args: [repoRoot],
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "",
+    env: createElectronLaunchEnv({
       AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE: "1",
       AUSTRALIAN_LIBRARY_BROWSER_DISABLE_GPU: "1",
       AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR: userDataDir
-    }
+    })
   });
 }
 
