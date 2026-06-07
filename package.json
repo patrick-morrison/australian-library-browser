@@ -11,6 +11,7 @@
     "dev": "env -u ELECTRON_RUN_AS_NODE AUSTRALIAN_LIBRARY_BROWSER_DISABLE_SINGLE_INSTANCE=1 AUSTRALIAN_LIBRARY_BROWSER_USER_DATA_DIR=tmp/electron-dev-profile electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
+    "dist:win": "electron-builder --win portable",
     "dist:mac": "electron-builder --mac zip",
     "mcp:start": "node mcp/server.js",
     "test:mcp": "node scripts/test-mcp.js",
@@ -74,6 +75,17 @@
       "artifactName": "australian-library-browser-${version}-mac-${arch}.${ext}",
       "target": [
         "zip"
+      ]
+    },
+    "win": {
+      "artifactName": "australian-library-browser-${version}-win-${arch}-portable.${ext}",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     }
   }
